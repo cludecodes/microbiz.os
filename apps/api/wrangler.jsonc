@@ -1,0 +1,17 @@
+{
+  // MicroBiz OS API - Cloudflare Worker with D1.
+  // The database_id below is a LOCAL placeholder. Run `wrangler d1 create microbiz`
+  // and replace it with your own database id before deploying (see docs/deployment.md).
+  "name": "microbiz-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-05",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "microbiz",
+      "database_id": "local-dev-placeholder",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@microbiz/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run && node test/smoke.mjs",
+    "db:migrate:local": "wrangler d1 migrations apply microbiz --local",
+    "db:seed:local": "wrangler d1 execute microbiz --local --file seeds/seed.sql",
+    "db:migrate:remote": "wrangler d1 migrations apply microbiz --remote",
+    "db:seed:remote": "wrangler d1 execute microbiz --remote --file seeds/seed.sql"
+  },
+  "dependencies": {
+    "@microbiz/shared": "*",
+    "hono": "^4.5.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240909.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5",
+    "wrangler": "^3.76.0"
+  }
+}

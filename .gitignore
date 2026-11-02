@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.vite/
+.wrangler/
+coverage/
+
+# Environment / secrets - never commit real credentials
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.local
+.vscode/

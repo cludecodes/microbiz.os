@@ -8,11 +8,15 @@
 | M1        | Shared kernel (money, entitlements, ledger)| ✅ |
 | M2        | DB schema + auth + tenancy + security core | ✅ |
 | M3        | Central dashboard + workspace mgmt + PWA   | ✅ |
-| M4        | Phase-1 products (WhatsApp CRM, QR menu, invoices) | ⏳ next |
+| M4a       | WhatsApp CRM & Order Manager (contacts, catalog, orders pipeline, metering) | ✅ |
+| M4b       | QR menu + invoices products                | ⏳ next |
 | M5        | Subscriptions, payouts, settlement, ledger | ⏳ |
 | M6        | Super-admin analytics                      | ⏳ |
 | M7        | Marketing, referrals, affiliate commissions| ⏳ |
 | M8        | Security audit, coverage, production prep  | ⏳ |
+
+Note: the M4a CRM module UI is English-first; its Urdu strings are batched
+with the i18n polish pass in M8 (the app shell itself is fully EN/UR today).
 
 ## Zero-cash budget notes (flagged as required by the brief)
 

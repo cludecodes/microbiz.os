@@ -34,7 +34,10 @@ microbiz-os/
       roles, workspace isolation, super-admin, webhook ingestion contract
 - [x] **M3** Web: landing, register/login, dashboard, workspaces & RBAC UI, app launcher
       with usage meters, settings (EN/UR + dark/light), PWA manifest + service worker
-- [ ] **M4** Phase-1 product logic (WhatsApp CRM, QR menu, invoices)
+- [x] **M4a** WhatsApp CRM & Order Manager: contacts, catalog, order pipeline
+      (server-computed totals, enforced status transitions), usage metering vs the
+      Free plan limit, RBAC + tenant isolation — API + module UI + integration tests
+- [ ] **M4b** Phase-1 products: QR menu, invoices
 - [ ] **M5** Subscriptions, payment providers, settlement + ledger posting
 - [ ] **M6** Super-admin analytics deepening
 - [ ] **M7** Marketing, referrals, affiliate commissions

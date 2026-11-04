@@ -9,6 +9,7 @@ import { workspaceRoutes } from "./routes/workspaces";
 import { appRoutes } from "./routes/apps";
 import { adminRoutes } from "./routes/admin";
 import { webhookRoutes } from "./routes/webhooks";
+import { crmRoutes } from "./routes/crm";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -81,6 +82,7 @@ app.get("/api/ready", async (c) => {
 app.route("/api/auth", authRoutes);
 app.route("/api/workspaces", workspaceRoutes);
 app.route("/api/apps", appRoutes);
+app.route("/api/crm", crmRoutes); // /api/crm/:workspaceId/* — Phase 1 WhatsApp CRM
 app.route("/api/admin", adminRoutes); // /api/admin/*
 app.route("/api", webhookRoutes); // /api/webhooks/* — provider signature auth
 

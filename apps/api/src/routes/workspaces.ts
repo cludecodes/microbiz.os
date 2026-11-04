@@ -168,12 +168,24 @@ workspaceRoutes.post("/:id/members", async (c) => {
   )
     .bind(ctx.workspace.id)
     .first<{ n: number }>();
-  const limit = await c.env.DB.prepare(
+
+  // Effective team limit = entitlement override (if any) else plan limit.
+  const planLimits = await c.env.DB.prepare(
     `SELECT limits FROM plans WHERE id = (SELECT plan_id FROM workspaces WHERE id = ?)`
   )
     .bind(ctx.workspace.id)
     .first<{ limits: string }>();
-  const teamLimit = limit ? (JSON.parse(limit.limits)["team_members"] ?? null) : null;
+  const override = await c.env.DB.prepare(
+    `SELECT limit_value FROM entitlements WHERE workspace_id = ? AND feature_key = 'team_members'`
+  )
+    .bind(ctx.workspace.id)
+    .first<{ limit_value: number | null }>();
+  const teamLimit =
+    override && override.limit_value !== null
+      ? override.limit_value
+      : planLimits
+        ? (JSON.parse(planLimits.limits)["team_members"] ?? null)
+        : null;
   if (teamLimit !== null && (workspaceMembers?.n ?? 0) + 1 > teamLimit) {
     return jsonError(c, 403, "Team member limit reached. Upgrade the plan to add more.");
   }

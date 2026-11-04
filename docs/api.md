@@ -73,3 +73,46 @@ Contract: verify signature → idempotent insert into `payment_events` by
 signatures return 401 and are recorded but never trigger payment confirmation.
 Provider-specific confirmation + ledger posting arrive in the payments
 milestone (M5); today the handler refuses to mark anything paid.
+
+## WhatsApp CRM & Order Manager (`/api/crm/:workspaceId`, M4)
+
+All endpoints re-check workspace membership server-side (member-level read,
+member-level create/update, admin-level delete). Order creation is metered
+against the plan limit (`whatsapp-crm.orders`, 50/month on Free).
+
+Contacts (WhatsApp customers):
+
+| Method | Path                              | Min role | Description                                                     |
+| ------ | --------------------------------- | -------- | --------------------------------------------------------------- |
+| GET    | `/api/crm/:workspaceId/contacts`  | member   | Latest 500 contacts                                             |
+| POST   | `/api/crm/:workspaceId/contacts`  | member   | `{name, phone(+(92/1…)), email?, locale?, tags?, notes?}` → 201 |
+| PATCH  | `/api/crm/:workspaceId/contacts/:contactId` | member | Partial update                                              |
+| DELETE | `/api/crm/:workspaceId/contacts/:contactId` | admin  | 409 if the contact has orders (financial records are kept)      |
+
+Catalog (workspace-priced, currency pinned to the workspace):
+
+| Method | Path                              | Min role | Description                                    |
+| ------ | --------------------------------- | -------- | ---------------------------------------------- |
+| GET    | `/api/crm/:workspaceId/products`  | member   | Active-first catalog list                      |
+| POST   | `/api/crm/:workspaceId/products`  | member   | `{name, price_minor, kind=physical|digital, …}` |
+| DELETE | `/api/crm/:workspaceId/products/:productId` | admin | Soft-deactivates (orders keep history)      |
+
+Orders & pipeline (`new → confirmed → preparing → delivering → completed`,
+`canceled` allowed until completed; `completed`/`canceled` are immutable):
+
+| Method | Path                              | Min role | Description                                                     |
+| ------ | --------------------------------- | -------- | --------------------------------------------------------------- |
+| GET    | `/api/crm/:workspaceId/orders`    | member   | Latest 200 with customer name, item counts                      |
+| GET    | `/api/crm/:workspaceId/orders/:orderId` | member | One order + its line items                                    |
+| POST   | `/api/crm/:workspaceId/orders`    | member   | `{customer_id?, items[{product_id?|name, qty_millis, unit_price_minor?}], tax_minor?, note?}`; plan-limit 403 when exhausted |
+| PATCH  | `/api/crm/:workspaceId/orders/:orderId` | member | `{status}`; invalid transition → 409                           |
+| GET    | `/api/crm/:workspaceId/summary`   | member   | Honest live counts: contacts, active products, pipeline by status, orders this month |
+
+Financial integrity rules enforced server-side:
+
+- **Catalog prices win**: items sent with `product_id` are re-priced from the
+  workspace catalog; the client's typed price is ignored.
+- **Exact math only**: every line total is `(unit_price_minor × qty_millis) / 1000`
+  computed on the server; if the product isn't exact, the order is rejected (422).
+- **Own currency pinned** to the workspace; catalog mismatches are rejected.
+- **Cancellation never erases the meter**: usage counts real order creation.

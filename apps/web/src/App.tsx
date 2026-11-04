@@ -8,6 +8,7 @@ import Workspaces from "./pages/Workspaces";
 import WorkspaceDetail from "./pages/WorkspaceDetail";
 import Apps from "./pages/Apps";
 import AppModule from "./pages/AppModule";
+import CRM from "./pages/CRM";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
@@ -47,6 +48,8 @@ export default function App() {
         <Route path="workspaces" element={<Workspaces />} />
         <Route path="workspaces/:workspaceId" element={<WorkspaceDetail />} />
         <Route path="apps" element={<Apps />} />
+        {/* Phase 1 products get a full module page; others use the shell. */}
+        <Route path="apps/whatsapp-crm" element={<CRM />} />
         <Route path="apps/:appId" element={<AppModule />} />
         <Route path="settings" element={<Settings />} />
         <Route path="admin" element={<Admin />} />

@@ -37,7 +37,10 @@ microbiz-os/
 - [x] **M4a** WhatsApp CRM & Order Manager: contacts, catalog, order pipeline
       (server-computed totals, enforced status transitions), usage metering vs the
       Free plan limit, RBAC + tenant isolation — API + module UI + integration tests
-- [ ] **M4b** Phase-1 products: QR menu, invoices
+- [x] **M4b** QR Restaurant Menu: management UI, live availability, public
+      QR menu page with scan metering (200 free/month, graceful degradation
+      past the limit) + integration tests
+- [ ] **M4c** Phase-1 product: invoices
 - [ ] **M5** Subscriptions, payment providers, settlement + ledger posting
 - [ ] **M6** Super-admin analytics deepening
 - [ ] **M7** Marketing, referrals, affiliate commissions

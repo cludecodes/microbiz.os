@@ -108,6 +108,35 @@ Orders & pipeline (`new → confirmed → preparing → delivering → completed
 | PATCH  | `/api/crm/:workspaceId/orders/:orderId` | member | `{status}`; invalid transition → 409                           |
 | GET    | `/api/crm/:workspaceId/summary`   | member   | Honest live counts: contacts, active products, pipeline by status, orders this month |
 
+## QR Restaurant Menu (`/api/qrmenu/:workspaceId`, M4b)
+
+Management endpoints (same membership rules as CRM). `is_available=false` hides
+the item from the public menu without deleting history.
+
+| Method | Path                                    | Min role | Description                                              |
+| ------ | --------------------------------------- | -------- | -------------------------------------------------------- |
+| GET    | `/api/qrmenu/:workspaceId/menu`         | member   | Menu items incl. sold-out ones (300 max)                 |
+| POST   | `/api/qrmenu/:workspaceId/menu`         | member   | `{name, price_minor, description?}` → 201, workspace currency pinned |
+| PATCH  | `/api/qrmenu/:workspaceId/menu/:itemId` | member   | `{is_available: true|false}` — live availability         |
+| GET    | `/api/apps/workspace/:id/usage/qr-menu`  | member   | `{used, limit}` scan meter for the month                 |
+
+### Public menu (the QR endpoint — **no session by design**)
+
+| Method | Path                                   | Description                                             |
+| ------ | -------------------------------------- | ------------------------------------------------------- |
+| GET    | `/api/public/qrmenu/:workspaceId`      | `{workspace:{name,currency}, limited, items[]}`         |
+
+- The scan meter records one `qr-menu.scans` unit per fetch while the plan
+  allows it. Past the plan limit (Free: 200/month) the endpoint returns 200
+  with `limited: true` and **no items** — the public page shows an honest
+  "menu temporarily unavailable" notice instead of fake data.
+- The public payload is deliberately minimal: `name`, `description`,
+  `price_minor`, `currency` only — no IDs, no costs, no contacts, nothing
+  the scanner didn't ask for.
+- The QR code itself encodes the same-origin `/menu/:workspaceId` page; it is
+  generated client-side with the free MIT `qrcode` library — no paid service
+  and no menu images are stored.
+
 Financial integrity rules enforced server-side:
 
 - **Catalog prices win**: items sent with `product_id` are re-priced from the

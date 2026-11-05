@@ -114,11 +114,15 @@ async function retryReq(fn, times = 5) {
 }
 
 export function clearLocalRateLimits() {
-  execSync('npx wrangler d1 execute microbiz --local --command "DELETE FROM rate_limits"', {
-    stdio: "ignore",
-    shell: true,
-    cwd: process.cwd(),
-  });
+  try {
+    execSync('npx wrangler d1 execute microbiz --local --command "DELETE FROM rate_limits"', {
+      stdio: "ignore",
+      shell: true,
+      cwd: process.cwd(),
+    });
+  } catch {
+    // Fresh local DB (table not created yet) — migrations run right after.
+  }
 }
 
 export function bootWrangler(portNumber) {

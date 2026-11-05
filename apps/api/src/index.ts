@@ -11,6 +11,7 @@ import { adminRoutes } from "./routes/admin";
 import { webhookRoutes } from "./routes/webhooks";
 import { crmRoutes } from "./routes/crm";
 import { qrMenuRoutes, qrMenuPublicRoutes } from "./routes/qrmenu";
+import { invoiceRoutes } from "./routes/invoices";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -85,6 +86,7 @@ app.route("/api/workspaces", workspaceRoutes);
 app.route("/api/apps", appRoutes);
 app.route("/api/crm", crmRoutes); // /api/crm/:workspaceId/* — Phase 1 WhatsApp CRM
 app.route("/api/qrmenu", qrMenuRoutes); // /api/qrmenu/:workspaceId/* — Phase 1 QR menu management
+app.route("/api/invoices", invoiceRoutes); // /api/invoices/:workspaceId/* — Phase 1 invoices & quotations
 app.route("/api/public", qrMenuPublicRoutes); // /api/public/qrmenu/:workspaceId — behind the QR sticker, no auth
 app.route("/api/admin", adminRoutes); // /api/admin/*
 app.route("/api", webhookRoutes); // /api/webhooks/* — provider signature auth

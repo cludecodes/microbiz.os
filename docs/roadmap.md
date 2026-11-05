@@ -10,8 +10,8 @@
 | M3        | Central dashboard + workspace mgmt + PWA   | ✅ |
 | M4a       | WhatsApp CRM & Order Manager (contacts, catalog, orders pipeline, metering) | ✅ |
 | M4b       | QR Restaurant Menu (public menu, scan metering, live availability) | ✅ |
-| M4c       | Invoices & quotations product            | ⏳ next |
-| M5        | Subscriptions, payouts, settlement, ledger | ⏳ |
+| M4c       | Invoices & quotations product            | ✅ |
+| M5        | Subscriptions, payouts, settlement, ledger | ⏳ next |
 | M6        | Super-admin analytics                      | ⏳ |
 | M7        | Marketing, referrals, affiliate commissions| ⏳ |
 | M8        | Security audit, coverage, production prep  | ⏳ |

@@ -10,6 +10,8 @@ import Apps from "./pages/Apps";
 import AppModule from "./pages/AppModule";
 import CRM from "./pages/CRM";
 import QRMenu from "./pages/QRMenu";
+import Invoices from "./pages/Invoices";
+import InvoicePrint from "./pages/InvoicePrint";
 import PublicMenu from "./pages/PublicMenu";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
@@ -55,6 +57,9 @@ export default function App() {
         {/* Phase 1 products get a full module page; others use the shell. */}
         <Route path="apps/whatsapp-crm" element={<CRM />} />
         <Route path="apps/qr-menu" element={<QRMenu />} />
+        <Route path="apps/invoices" element={<Invoices />} />
+        {/* Printable document view — browser print dialog is the free PDF path. */}
+        <Route path="invoices/:documentId/print" element={<InvoicePrint />} />
         <Route path="apps/:appId" element={<AppModule />} />
         <Route path="settings" element={<Settings />} />
         <Route path="admin" element={<Admin />} />

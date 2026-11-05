@@ -162,30 +162,40 @@ CREATE TABLE order_items (
 CREATE INDEX idx_order_items_order ON order_items(order_id);
 
 CREATE TABLE invoices (
-  id           TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  customer_id  TEXT REFERENCES customers(id),
-  number       TEXT NOT NULL,
-  kind         TEXT NOT NULL CHECK (kind IN ('invoice','quotation','reminder')),
-  status       TEXT NOT NULL CHECK (status IN ('draft','sent','paid','partially_paid','overdue','canceled')),
-  currency     TEXT NOT NULL CHECK (currency IN ('PKR','USD')),
-  total_minor  INTEGER NOT NULL,
-  paid_minor   INTEGER NOT NULL DEFAULT 0,
-  due_at       TEXT,
-  pdf_path     TEXT,
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL,
+  id             TEXT PRIMARY KEY,
+  workspace_id   TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  customer_id    TEXT REFERENCES customers(id),
+  number         TEXT NOT NULL,
+  type           TEXT NOT NULL CHECK (type IN ('invoice','quotation')),
+  status         TEXT NOT NULL CHECK (
+                   (type = 'invoice'    AND status IN ('draft','sent','paid','void'))
+                OR (type = 'quotation'  AND status IN ('draft','sent','accepted','declined','expired','void'))
+                 ),
+  client_name    TEXT NOT NULL,
+  client_email   TEXT,
+  client_address TEXT,
+  subtotal_minor INTEGER NOT NULL,
+  tax_minor      INTEGER NOT NULL DEFAULT 0,
+  total_minor    INTEGER NOT NULL,
+  currency       TEXT NOT NULL CHECK (currency IN ('PKR','USD')),
+  notes          TEXT NOT NULL DEFAULT '',
+  due_date       TEXT,
+  sent_at        TEXT,
+  paid_at        TEXT,
+  created_at     TEXT NOT NULL,
+  updated_at     TEXT NOT NULL,
   UNIQUE (workspace_id, number)
 );
 CREATE INDEX idx_invoices_workspace ON invoices(workspace_id, created_at DESC);
 
 CREATE TABLE invoice_line_items (
-  id             TEXT PRIMARY KEY,
-  invoice_id     TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
-  description    TEXT NOT NULL,
-  qty_millis     INTEGER NOT NULL,
+  id               TEXT PRIMARY KEY,
+  invoice_id       TEXT NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  name             TEXT NOT NULL,
+  qty_millis       INTEGER NOT NULL,
   unit_price_minor INTEGER NOT NULL,
-  total_minor    INTEGER NOT NULL
+  total_minor      INTEGER NOT NULL,
+  created_at       TEXT NOT NULL
 );
 CREATE INDEX idx_invoice_items_invoice ON invoice_line_items(invoice_id);
 

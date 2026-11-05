@@ -40,7 +40,10 @@ microbiz-os/
 - [x] **M4b** QR Restaurant Menu: management UI, live availability, public
       QR menu page with scan metering (200 free/month, graceful degradation
       past the limit) + integration tests
-- [ ] **M4c** Phase-1 product: invoices
+- [x] **M4c** Invoices & Quotations: line-item documents with integer-money
+      totals, per-type lifecycles (invoice/quotation), monthly metering (Free:
+      5/month), void-not-delete policy, print view (browser PDF, no paid deps)
+      — API + module UI + integration tests (Phase 1 complete)
 - [ ] **M5** Subscriptions, payment providers, settlement + ledger posting
 - [ ] **M6** Super-admin analytics deepening
 - [ ] **M7** Marketing, referrals, affiliate commissions

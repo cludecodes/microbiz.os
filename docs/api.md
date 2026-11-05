@@ -145,3 +145,42 @@ Financial integrity rules enforced server-side:
   computed on the server; if the product isn't exact, the order is rejected (422).
 - **Own currency pinned** to the workspace; catalog mismatches are rejected.
 - **Cancellation never erases the meter**: usage counts real order creation.
+
+## Invoices & Quotations (`/api/invoices/:workspaceId`, M4c)
+
+Documents for billing and bidding. `type` selects the lifecycle: invoices go
+`draft → sent → paid|void`, quotations go `draft → sent → accepted|declined|
+expired|void`. Documents are financial records — **there is no DELETE route**;
+they move forward or are voided, never destroyed.
+
+| Method | Path                                  | Min role | Description                                                     |
+| ------ | ------------------------------------- | -------- | --------------------------------------------------------------- |
+| GET    | `/api/invoices/:workspaceId`          | member   | Documents (200 max, newest first); `?type=invoice\|quotation` filter |
+| POST   | `/api/invoices/:workspaceId`          | member   | Create draft — see body below → 201 `{document, items}`         |
+| GET    | `/api/invoices/:workspaceId/:docId`   | member   | Document + line items                                           |
+| PATCH  | `/api/invoices/:workspaceId/:docId`   | member   | `{status}` — forward-only transition, 409 on invalid move        |
+
+POST body: `{type, customer_id? | client_name, client_email?, client_address?,
+due_date? (invoices only, YYYY-MM-DD), tax_minor?, notes?, items:[{name,
+qty_millis, unit_price_minor}]}`. Numbers are sequential per workspace and type
+(`INV-0001`, `QTN-0001`).
+
+Financial integrity rules enforced server-side:
+
+- **Exact math only**: line totals are computed on the server; a line whose
+  `unit_price × qty` isn't a whole minor unit is rejected (422).
+- **Totals**: `total = Σ line_totals + tax_minor`, integer minor units only,
+  workspace currency pinned on the document.
+- **Client identity**: either a `customer_id` that belongs to this workspace
+  (404 otherwise) or a typed `client_name` — never both required, never
+  cross-tenant.
+- **Metering**: every created document (both types) consumes one
+  `invoices.monthly` unit (Free: 5/month) → 403 past the limit with an honest
+  explanation.
+- **Status is audited**: every transition writes an audit entry with from/to.
+- **Manual `paid` = owner attestation** (they received the money outside the
+  platform); automated payment confirmation via signed provider webhooks lands
+  in M5 and will require a verified event before `paid`.
+- **PDF export**: the print view (`/app/invoices/:docId/print`) uses the
+  browser's print dialog — free, no third-party service. Server-side PDF
+  generation is **flagged for approval** before it ships (see roadmap).

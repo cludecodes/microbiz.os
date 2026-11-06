@@ -2,8 +2,14 @@
  * units; quantities use qty_millis (x1000) like the CRM order items. */
 
 import { z } from "zod";
+import { BILLING_PROVIDERS } from "./billing";
 
 export const invoiceTypeSchema = z.enum(["invoice", "quotation"]);
+
+/** A client-payable link always uses one of the supported payment providers. */
+export const invoicePaymentLinkSchema = z.object({
+  provider: z.enum(BILLING_PROVIDERS),
+});
 
 export const invoiceItemCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),

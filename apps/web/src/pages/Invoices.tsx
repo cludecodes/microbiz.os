@@ -35,6 +35,34 @@ interface LineRow {
   price: string;
 }
 
+interface PaymentProvider {
+  id: string;
+  label: string;
+  mode: "hosted" | "manual";
+  currencies: string[];
+  configured: boolean;
+}
+
+interface InvoicePayment {
+  id: string;
+  provider: string;
+  provider_txn_ref: string | null;
+  amount_minor: number;
+  fee_minor: number;
+  currency: string;
+  status: string;
+  settlement_status: string;
+  refund_minor: number;
+  created_at: string;
+  confirmed_at: string | null;
+}
+
+interface PaymentLinkResult {
+  payment: InvoicePayment;
+  checkout: { mode: "hosted" | "manual"; redirectUrl: string | null; instructions: string } | null;
+  replayed?: boolean;
+}
+
 const STATUS_TONE: Record<string, "slate" | "green" | "amber" | "blue" | "rose"> = {
   draft: "slate",
   sent: "blue",
@@ -43,6 +71,12 @@ const STATUS_TONE: Record<string, "slate" | "green" | "amber" | "blue" | "rose">
   declined: "rose",
   expired: "slate",
   void: "rose",
+  confirmed: "green",
+  awaiting_confirmation: "amber",
+  initiated: "amber",
+  canceled: "slate",
+  refunded: "slate",
+  failed: "rose",
 };
 
 export default function Invoices() {
@@ -53,6 +87,12 @@ export default function Invoices() {
   const [usage, setUsage] = useState<{ used: number | null; limit: number | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState<PaymentProvider[]>([]);
+  const [collectDoc, setCollectDoc] = useState<DocumentRow | null>(null);
+  const [collectProvider, setCollectProvider] = useState("");
+  const [collectBusy, setCollectBusy] = useState(false);
+  const [collectResult, setCollectResult] = useState<PaymentLinkResult | null>(null);
+  const [collectPayments, setCollectPayments] = useState<InvoicePayment[]>([]);
 
   const currency = (ws?.currency ?? "PKR") as CurrencyCode;
 
@@ -71,6 +111,64 @@ export default function Invoices() {
     if (!ws) return;
     load();
   }, [ws, load]);
+
+  useEffect(() => {
+    (async () => {
+      const res = await api.get<{ providers: PaymentProvider[] }>("/api/billing/providers");
+      if (res.ok && res.data) setProviders(res.data.providers);
+    })();
+  }, []);
+
+  function optionsFor(doc: DocumentRow): PaymentProvider[] {
+    return providers.filter(
+      (p) => p.currencies.includes(doc.currency) && (p.mode === "manual" || p.configured)
+    );
+  }
+
+  function defaultProviderFor(doc: DocumentRow): string {
+    const options = optionsFor(doc);
+    const preferred = doc.currency === "USD" ? "payoneer" : "bank";
+    return options.find((p) => p.id === preferred)?.id ?? options[0]?.id ?? "";
+  }
+
+  async function loadInvoicePayments(doc: DocumentRow) {
+    if (!ws) return;
+    const res = await api.get<{ payments: InvoicePayment[] }>(`/api/invoices/${ws.id}/${doc.id}`);
+    if (res.ok && res.data) setCollectPayments(res.data.payments ?? []);
+  }
+
+  async function openCollect(doc: DocumentRow) {
+    setCollectDoc(doc);
+    setCollectProvider(defaultProviderFor(doc));
+    setCollectResult(null);
+    setCollectPayments([]);
+    await loadInvoicePayments(doc);
+  }
+
+  async function createPaymentLink() {
+    if (!ws || !collectDoc) return;
+    setCollectBusy(true);
+    setError(null);
+    const res = await api.post<PaymentLinkResult>(
+      `/api/invoices/${ws.id}/${collectDoc.id}/payment-link`,
+      { provider: collectProvider }
+    );
+    setCollectBusy(false);
+    if (!res.ok || !res.data) {
+      setError(res.detail ?? res.error ?? "Could not create the payment link");
+      return;
+    }
+    setCollectResult(res.data);
+    await loadInvoicePayments(collectDoc);
+    await load();
+  }
+
+  async function refreshCollect() {
+    if (!collectDoc) return;
+    setCollectResult(null);
+    await loadInvoicePayments(collectDoc);
+    await load();
+  }
 
   if (!ws) return <Card title="No workspace">Create a workspace first.</Card>;
 
@@ -117,6 +215,96 @@ export default function Invoices() {
       </div>
 
       <ErrorText>{error}</ErrorText>
+
+      {collectDoc && (
+        <Card
+          title={`Collect payment · ${collectDoc.number} · ${collectDoc.client_name}`}
+          className="mb-5"
+          action={
+            <Button variant="ghost" onClick={() => setCollectDoc(null)}>
+              Close
+            </Button>
+          }
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block min-w-[12rem] flex-1">
+              <span className="mb-1 block text-xs font-medium text-slate-500">Payment provider</span>
+              <Select value={collectProvider} onChange={(e) => setCollectProvider(e.target.value)}>
+                {optionsFor(collectDoc).length === 0 && <option value="">No provider configured</option>}
+                {optionsFor(collectDoc).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                    {p.mode === "hosted" ? " (hosted checkout)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Button onClick={createPaymentLink} disabled={collectBusy || !collectProvider}>
+              {collectBusy ? "Creating…" : "Create payment link"}
+            </Button>
+            <Button variant="secondary" onClick={refreshCollect}>
+              Refresh status
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            Full invoice total {formatMoney(collectDoc.total_minor, collectDoc.currency as CurrencyCode)}. The invoice
+            is marked paid only after a signed provider webhook or an admin-verified bank receipt. A browser success
+            page changes nothing.
+          </p>
+
+          {collectResult && (
+            <div className="mt-4 rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+              <p className="text-sm text-slate-700 dark:text-slate-200">{collectResult.checkout?.instructions}</p>
+              {collectResult.checkout?.redirectUrl && (
+                <a
+                  href={collectResult.checkout.redirectUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-2 inline-block rounded-lg bg-brand-600 px-4 py-2 text-sm font-medium text-white hover:bg-brand-700"
+                >
+                  Open secure checkout →
+                </a>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-slate-500">Reference</span>
+                <code className="rounded bg-slate-100 px-2 py-1 font-mono text-xs dark:bg-slate-800">
+                  {collectResult.payment.provider_txn_ref}
+                </code>
+                <Badge tone={STATUS_TONE[collectResult.payment.status] ?? "slate"}>
+                  {collectResult.payment.status}
+                </Badge>
+                {collectResult.replayed && <span className="text-xs text-slate-400">Existing open link reused.</span>}
+              </div>
+            </div>
+          )}
+
+          {collectPayments.length > 0 && (
+            <div className="mt-4">
+              <Table head={["Created", "Provider", "Reference", "Amount", "Payment", "Settlement"]}>
+                {collectPayments.map((p) => (
+                  <tr key={p.id}>
+                    <td className="px-3 py-2 text-xs text-slate-500">{p.created_at.slice(0, 10)}</td>
+                    <td className="px-3 py-2 text-xs">{p.provider}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{p.provider_txn_ref ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {formatMoney(p.amount_minor, p.currency as CurrencyCode)}
+                      {p.refund_minor > 0 && (
+                        <span className="block text-xs text-rose-500">
+                          −{formatMoney(p.refund_minor, p.currency as CurrencyCode)} refunded
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge tone={STATUS_TONE[p.status] ?? "slate"}>{p.status}</Badge>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{p.settlement_status}</td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-5">
         <Card title={`New ${tab === "invoice" ? "invoice" : "quotation"}`} className="lg:col-span-2">
@@ -176,12 +364,19 @@ export default function Invoices() {
                     ) : null}
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Link
-                      to={`/app/invoices/${d.id}/print`}
-                      className="text-xs font-medium text-brand-600 hover:underline dark:text-brand-400"
-                    >
-                      Print
-                    </Link>
+                    <div className="flex items-center justify-end gap-2">
+                      {d.type === "invoice" && d.status === "sent" && (
+                        <Button variant="ghost" onClick={() => openCollect(d)} disabled={busy}>
+                          Collect
+                        </Button>
+                      )}
+                      <Link
+                        to={`/app/invoices/${d.id}/print`}
+                        className="text-xs font-medium text-brand-600 hover:underline dark:text-brand-400"
+                      >
+                        Print
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}

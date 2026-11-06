@@ -3,7 +3,13 @@ import type { Env } from "../types";
 import { getSessionUser, type ApiContext } from "../lib/auth";
 import { jsonError, nowIso, uuid } from "../lib/http";
 import { audit } from "../lib/ops";
-import { confirmPayment, type PaymentRow } from "../lib/billing";
+import { confirmPayment, refundPayment, settlePayment, type PaymentRow } from "../lib/billing";
+import {
+  decryptPayoutDetails,
+  isPayoutEncryptionConfigured,
+  payoutDetailsPreview,
+} from "../lib/payouts";
+import type { PayoutProfileKind } from "@microbiz/shared";
 
 /**
  * Super-admin controls. Every route requires users.is_super_admin = 1,
@@ -136,13 +142,14 @@ adminRoutes.get("/payments", async (c) => {
   const status = c.req.query("status");
   const provider = c.req.query("provider");
   const rows = await c.env.DB.prepare(
-    `SELECT pm.id, pm.workspace_id, pm.plan_id, pm.provider, pm.provider_txn_ref,
+    `SELECT pm.id, pm.workspace_id, pm.plan_id, pm.invoice_id, pm.provider, pm.provider_txn_ref,
             pm.amount_minor, pm.fee_minor, pm.currency, pm.status, pm.settlement_status,
             pm.refund_minor, pm.created_at, pm.confirmed_at, pm.settled_at,
-            w.name AS workspace_name, pl.name AS plan_name
+            w.name AS workspace_name, pl.name AS plan_name, i.number AS invoice_number
      FROM payments pm
      JOIN workspaces w ON w.id = pm.workspace_id
      LEFT JOIN plans pl ON pl.id = pm.plan_id
+     LEFT JOIN invoices i ON i.id = pm.invoice_id
      WHERE (? IS NULL OR pm.status = ?) AND (? IS NULL OR pm.provider = ?)
      ORDER BY pm.created_at DESC LIMIT 200`
   )
@@ -191,7 +198,7 @@ adminRoutes.post("/payments/:paymentId/confirm", async (c) => {
   if (!Number.isInteger(feeMinor) || feeMinor < 0) return jsonError(c, 422, "fee_minor must be a non-negative integer");
 
   const payment = await c.env.DB.prepare(
-    `SELECT id, workspace_id, plan_id, provider, provider_txn_ref, amount_minor, fee_minor,
+    `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
             currency, status, settlement_status, refund_minor
      FROM payments WHERE id = ?`
   )
@@ -287,6 +294,7 @@ adminRoutes.post("/payments/:paymentId/confirm", async (c) => {
       amount_minor: payment.amount_minor,
       fee_minor: feeMinor,
       plan_activated: result.planActivated,
+      invoice_paid: result.invoicePaid,
       journal_id: result.journalId,
       reference,
     },
@@ -296,9 +304,272 @@ adminRoutes.post("/payments/:paymentId/confirm", async (c) => {
     ok: true,
     payment_id: payment.id,
     plan_activated: result.planActivated,
+    invoice_paid: result.invoicePaid,
     journal_id: result.journalId,
     settlement_status: "settled",
   });
+});
+
+/**
+ * Record a refund the admin has ALREADY executed in the provider dashboard or
+ * bank. No provider refund API is called here (that stays flagged), so the
+ * reference is an attestation, not a machine confirmation.
+ */
+adminRoutes.post("/payments/:paymentId/refund", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const paymentId = c.req.param("paymentId");
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const input = (body ?? {}) as Record<string, unknown>;
+  const amountMinor = Number(input.amount_minor);
+  const reason = typeof input.reason === "string" ? input.reason.trim().slice(0, 300) : "";
+  const providerRef = typeof input.provider_ref === "string" ? input.provider_ref.trim().slice(0, 120) : "";
+  if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+    return jsonError(c, 422, "amount_minor must be a positive integer");
+  }
+
+  const payment = await c.env.DB.prepare(
+    `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
+            currency, status, settlement_status, refund_minor
+     FROM payments WHERE id = ?`
+  )
+    .bind(paymentId)
+    .first<PaymentRow>();
+  if (!payment) return jsonError(c, 404, "Payment not found");
+
+  const result = await refundPayment(c.env, {
+    payment,
+    amountMinor,
+    reason: reason || "admin:refund",
+    providerRef: providerRef || null,
+  });
+  if (!result.ok) {
+    return jsonError(
+      c,
+      409,
+      `Refund refused: ${result.reason}`,
+      result.reason === "refund_exceeds_refundable"
+        ? `This payment has ${payment.amount_minor - payment.refund_minor} minor units still refundable.`
+        : undefined
+    );
+  }
+
+  await audit(c, {
+    actor_user_id: admin.id,
+    workspace_id: payment.workspace_id,
+    action: "admin.payment_refunded",
+    target_type: "payment",
+    target_id: payment.id,
+    detail: {
+      amount_minor: amountMinor,
+      refund_minor: result.refundMinor,
+      payment_status: result.status,
+      from_settled_bank: result.fromSettledBank,
+      provider: payment.provider,
+      provider_ref: providerRef,
+      reason,
+      journal_id: result.journalId,
+    },
+  });
+
+  return c.json({
+    ok: true,
+    payment_id: payment.id,
+    refund_minor: result.refundMinor,
+    status: result.status,
+    from_settled_bank: result.fromSettledBank,
+    journal_id: result.journalId,
+  });
+});
+
+/** Mark a hosted payout as received, after checking the real bank credit. */
+adminRoutes.post("/payments/:paymentId/settle", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const paymentId = c.req.param("paymentId");
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const input = (body ?? {}) as Record<string, unknown>;
+  const providerRef = typeof input.provider_ref === "string" ? input.provider_ref.trim().slice(0, 120) : "";
+  const hasAmount = input.amount_minor !== undefined && input.amount_minor !== null;
+  const receivedMinor = hasAmount ? Number(input.amount_minor) : null;
+  if (hasAmount && (!Number.isInteger(receivedMinor) || (receivedMinor as number) < 0)) {
+    return jsonError(c, 422, "amount_minor must be a non-negative integer (what the bank credited)");
+  }
+
+  const payment = await c.env.DB.prepare(
+    `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
+            currency, status, settlement_status, refund_minor
+     FROM payments WHERE id = ?`
+  )
+    .bind(paymentId)
+    .first<PaymentRow>();
+  if (!payment) return jsonError(c, 404, "Payment not found");
+  if (!["safepay", "lemonsqueezy"].includes(payment.provider)) {
+    return jsonError(c, 409, "Manual receipts are settled at confirmation; only hosted payouts are marked here");
+  }
+
+  const result = await settlePayment(c.env, { payment, receivedMinor, providerRef: providerRef || null });
+  if (!result.ok) {
+    return jsonError(c, 409, `Settlement refused: ${result.reason}`, `net_minor was ${payment.amount_minor - payment.fee_minor - payment.refund_minor}`);
+  }
+
+  await audit(c, {
+    actor_user_id: admin.id,
+    workspace_id: payment.workspace_id,
+    action: "admin.payment_settled",
+    target_type: "payment",
+    target_id: payment.id,
+    detail: {
+      provider: payment.provider,
+      net_minor: result.netMinor,
+      received_minor: result.receivedMinor,
+      payout_fee_minor: result.payoutFeeMinor,
+      provider_ref: providerRef,
+      journal_id: result.journalId,
+    },
+  });
+
+  return c.json({
+    ok: true,
+    payment_id: payment.id,
+    settlement_status: "settled",
+    net_minor: result.netMinor,
+    received_minor: result.receivedMinor,
+    payout_fee_minor: result.payoutFeeMinor,
+    journal_id: result.journalId,
+  });
+});
+
+adminRoutes.get("/settlements", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+
+  const hostedSelect = `SELECT pm.id, pm.workspace_id, pm.plan_id, pm.invoice_id, pm.provider,
+            pm.provider_txn_ref, pm.amount_minor, pm.fee_minor, pm.refund_minor, pm.currency,
+            pm.amount_minor - pm.fee_minor - pm.refund_minor AS net_minor,
+            pm.status, pm.settlement_status, pm.confirmed_at, pm.settled_at,
+            w.name AS workspace_name, pl.name AS plan_name, i.number AS invoice_number
+     FROM payments pm
+     JOIN workspaces w ON w.id = pm.workspace_id
+     LEFT JOIN plans pl ON pl.id = pm.plan_id
+     LEFT JOIN invoices i ON i.id = pm.invoice_id
+     WHERE pm.provider IN ('safepay','lemonsqueezy')`;
+
+  const [bank, pendingHosted, settledHosted] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT bs.id, bs.workspace_id, bs.payment_id, bs.provider, bs.reference,
+              bs.expected_minor, bs.received_minor, bs.currency, bs.status, bs.settled_at, bs.created_at,
+              w.name AS workspace_name
+       FROM bank_settlements bs JOIN workspaces w ON w.id = bs.workspace_id
+       ORDER BY bs.created_at DESC LIMIT 200`
+    ).all(),
+    c.env.DB.prepare(
+      `${hostedSelect} AND pm.status IN ('confirmed','refunded') AND pm.settlement_status = 'pending'
+       ORDER BY pm.confirmed_at DESC LIMIT 200`
+    ).all(),
+    c.env.DB.prepare(
+      `${hostedSelect} AND pm.settlement_status = 'settled' AND pm.settled_at IS NOT NULL
+       ORDER BY pm.settled_at DESC LIMIT 100`
+    ).all(),
+  ]);
+
+  return c.json({
+    bank: bank.results,
+    pending_hosted: pendingHosted.results,
+    settled_hosted: settledHosted.results,
+    note: "Hosted payouts are marked settled only after the admin checks the real bank credit. The difference between net held funds and the payout is recorded as payout_fees.",
+  });
+});
+
+// ---------------------------------------------------------- payout profiles
+
+adminRoutes.get("/payout-profiles", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+
+  const rows = await c.env.DB.prepare(
+    `SELECT pp.id, pp.workspace_id, pp.kind, pp.label, pp.approved, pp.details_encrypted, pp.created_at,
+            w.name AS workspace_name
+     FROM payout_profiles pp JOIN workspaces w ON w.id = pp.workspace_id
+     ORDER BY pp.created_at DESC LIMIT 200`
+  )
+    .all<{
+      id: string;
+      workspace_id: string;
+      kind: PayoutProfileKind;
+      label: string;
+      approved: number;
+      details_encrypted: string;
+      created_at: string;
+      workspace_name: string;
+    }>();
+
+  const encryptionConfigured = isPayoutEncryptionConfigured(c.env);
+  const profiles = await Promise.all(
+    rows.results.map(async (row) => {
+      const details = encryptionConfigured
+        ? await decryptPayoutDetails(c.env, row.details_encrypted)
+        : null;
+      return {
+        id: row.id,
+        workspace_id: row.workspace_id,
+        workspace_name: row.workspace_name,
+        kind: row.kind,
+        label: row.label,
+        approved: row.approved,
+        created_at: row.created_at,
+        details_preview: payoutDetailsPreview(details),
+        decryptable: Boolean(details),
+      };
+    })
+  );
+
+  await audit(c, { actor_user_id: admin.id, action: "admin.payout_profiles_view" });
+  return c.json({ profiles, encryption_configured: encryptionConfigured });
+});
+
+adminRoutes.post("/payout-profiles/:profileId/approval", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const approved = Boolean((body as Record<string, unknown> | null)?.approved);
+  const profile = await c.env.DB.prepare(
+    `SELECT id, workspace_id, kind, label, approved FROM payout_profiles WHERE id = ?`
+  )
+    .bind(c.req.param("profileId"))
+    .first<{ id: string; workspace_id: string; kind: string; label: string; approved: number }>();
+  if (!profile) return jsonError(c, 404, "Payout profile not found");
+
+  await c.env.DB.prepare(`UPDATE payout_profiles SET approved = ? WHERE id = ?`)
+    .bind(approved ? 1 : 0, profile.id)
+    .run();
+  await audit(c, {
+    actor_user_id: admin.id,
+    workspace_id: profile.workspace_id,
+    action: "admin.payout_profile_approval",
+    target_type: "payout_profile",
+    target_id: profile.id,
+    detail: { kind: profile.kind, label: profile.label, from: profile.approved, to: approved ? 1 : 0 },
+  });
+  return c.json({ ok: true, id: profile.id, approved: approved ? 1 : 0 });
 });
 
 adminRoutes.get("/ledger", async (c) => {

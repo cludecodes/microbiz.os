@@ -135,6 +135,8 @@ export const TEST_PROVIDER_VARS = {
   LEMON_SQUEEZY_WEBHOOK_SECRET: "test-lemonsqueezy-secret",
   SAFEPAY_CHECKOUT_URL_TEMPLATE: "https://sandbox.getsafepay.example/pay/test-link",
   LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE: "https://test-store.lemonsqueezy.com/buy/test-variant",
+  // base64("0123456789abcdef0123456789abcdef") — test-only AES-256 key.
+  PAYOUT_ENCRYPTION_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
 };
 
 export function bootWrangler(portNumber) {

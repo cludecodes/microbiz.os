@@ -79,6 +79,35 @@ describe("payment ledger postings", () => {
     expect(validateJournal({ postings: settlementPostings(1470000, "PKR") })).toEqual({ ok: true });
   });
 
+  it("refunds from settled bank funds when the payout already landed", () => {
+    const postings = refundPostings(5000, "USD", { fromSettledBank: true });
+    expect(validateJournal({ postings })).toEqual({ ok: true });
+    expect(postings.find((p) => p.direction === "CREDIT")?.account).toBe("settled_bank");
+  });
+
+  it("records a payout fee when the bank credit is smaller than net held funds", () => {
+    // ₨14,700 was held; the payout credited ₨14,000 and took ₨700 at payout.
+    const postings = settlementPostings(1470000, "PKR", 1400000);
+    expect(validateJournal({ postings })).toEqual({ ok: true });
+    expect(postings).toContainEqual({
+      account: "settled_bank",
+      direction: "DEBIT",
+      currency: "PKR",
+      amount_minor: 1400000,
+    });
+    expect(postings).toContainEqual({
+      account: "payout_fees",
+      direction: "DEBIT",
+      currency: "PKR",
+      amount_minor: 70000,
+    });
+  });
+
+  it("refuses a payout larger than the net held balance", () => {
+    expect(() => settlementPostings(1000, "PKR", 1001)).toThrow();
+    expect(() => settlementPostings(1000, "PKR", -1)).toThrow();
+  });
+
   it("adds a calendar month and clamps month-end dates", () => {
     expect(addBillingMonth("2026-01-31T10:00:00.000Z")).toBe("2026-02-28T10:00:00.000Z");
     expect(addBillingMonth("2024-01-31T00:00:00.000Z")).toBe("2024-02-29T00:00:00.000Z");

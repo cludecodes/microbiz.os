@@ -1,10 +1,26 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { BILLING_PROVIDERS, PROVIDER_CAPABILITIES, checkoutSchema, type BillingProvider, type CurrencyCode } from "@microbiz/shared";
+import {
+  BILLING_PROVIDERS,
+  PAYOUT_PROFILE_KINDS,
+  PROVIDER_CAPABILITIES,
+  checkoutSchema,
+  payoutProfileSchema,
+  type BillingProvider,
+  type CurrencyCode,
+  type PayoutProfileKind,
+} from "@microbiz/shared";
 import { getSessionUser, requireWorkspaceAccess, unauthorized, forbidden } from "../lib/auth";
 import { jsonError, zodMessage, nowIso, uuid } from "../lib/http";
 import { audit } from "../lib/ops";
-import { getPaymentForWorkspace, newTransferReference } from "../lib/billing";
+import { getPaymentForWorkspace, newUniquePaymentReference } from "../lib/billing";
+import {
+  decryptPayoutDetails,
+  encryptPayoutDetails,
+  isPayoutEncryptionConfigured,
+  payoutDetailsPreview,
+  PayoutEncryptionNotConfigured,
+} from "../lib/payouts";
 import {
   createCheckoutSession,
   isProviderConfigured,
@@ -74,10 +90,12 @@ billingRoutes.get("/workspace/:workspaceId", async (c) => {
 
   const payments = await c.env.DB.prepare(
     `SELECT pm.id, pm.provider, pm.provider_txn_ref, pm.amount_minor, pm.fee_minor, pm.currency,
-            pm.status, pm.settlement_status, pm.refund_minor, pm.plan_id,
+            pm.status, pm.settlement_status, pm.refund_minor, pm.plan_id, pm.invoice_id,
             pm.created_at, pm.confirmed_at, pm.settled_at,
-            pl.name AS plan_name
-     FROM payments pm LEFT JOIN plans pl ON pl.id = pm.plan_id
+            pl.name AS plan_name, i.number AS invoice_number
+     FROM payments pm
+     LEFT JOIN plans pl ON pl.id = pm.plan_id
+     LEFT JOIN invoices i ON i.id = pm.invoice_id
      WHERE pm.workspace_id = ?
      ORDER BY pm.created_at DESC LIMIT 25`
   )
@@ -179,16 +197,7 @@ billingRoutes.post("/workspace/:workspaceId/checkout", async (c) => {
   }
 
   // Provider-side reference: short, human-readable, unique per provider.
-  let reference = newTransferReference();
-  for (let i = 0; i < 3; i++) {
-    const clash = await c.env.DB.prepare(
-      `SELECT 1 FROM payments WHERE provider = ? AND provider_txn_ref = ?`
-    )
-      .bind(provider, reference)
-      .first();
-    if (!clash) break;
-    reference = newTransferReference();
-  }
+  const reference = await newUniquePaymentReference(c.env, provider);
 
   let checkout;
   try {
@@ -316,4 +325,162 @@ billingRoutes.get("/providers", (c) => {
       configured: isProviderConfigured(c.env, id),
     })),
   });
+});
+
+// ---------------------------------------------------------- payout profiles
+
+/**
+ * Payout targets are write-only: the encrypted details are never returned to a
+ * browser. Owners see a masked preview; admins approve a masked preview.
+ */
+billingRoutes.get("/workspace/:workspaceId/payout-profiles", async (c) => {
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  if (!ctx) {
+    const u = await getSessionUser(c);
+    return u ? forbidden(c) : unauthorized(c);
+  }
+  const rows = await c.env.DB.prepare(
+    `SELECT id, kind, label, approved, details_encrypted, created_at
+     FROM payout_profiles WHERE workspace_id = ? ORDER BY kind`
+  )
+    .bind(ctx.workspace.id)
+    .all<{
+      id: string;
+      kind: PayoutProfileKind;
+      label: string;
+      approved: number;
+      details_encrypted: string;
+      created_at: string;
+    }>();
+
+  const encryptionConfigured = isPayoutEncryptionConfigured(c.env);
+  const profiles = await Promise.all(
+    rows.results.map(async (row) => {
+      const details =
+        encryptionConfigured && row.details_encrypted
+          ? await decryptPayoutDetails(c.env, row.details_encrypted)
+          : null;
+      return {
+        id: row.id,
+        kind: row.kind,
+        label: row.label,
+        approved: row.approved,
+        created_at: row.created_at,
+        details_preview: payoutDetailsPreview(details),
+        decryptable: Boolean(details),
+      };
+    })
+  );
+
+  return c.json({
+    profiles,
+    encryption_configured: encryptionConfigured,
+    note: "Payout details are AES-256-GCM encrypted and only ever shown masked. Card numbers, CVVs, passwords and OTPs are rejected.",
+  });
+});
+
+billingRoutes.post("/workspace/:workspaceId/payout-profiles/:kind", async (c) => {
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  if (!ctx) {
+    const u = await getSessionUser(c);
+    return u ? forbidden(c) : unauthorized(c);
+  }
+  const kind = c.req.param("kind") as PayoutProfileKind;
+  if (!PAYOUT_PROFILE_KINDS.includes(kind)) return jsonError(c, 422, "Unknown payout profile kind");
+
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const parsed = payoutProfileSchema.safeParse(body);
+  if (!parsed.success) return jsonError(c, 422, zodMessage(parsed.error));
+
+  let encrypted: string;
+  try {
+    encrypted = await encryptPayoutDetails(c.env, parsed.data.details);
+  } catch (err) {
+    if (err instanceof PayoutEncryptionNotConfigured) {
+      return jsonError(
+        c,
+        501,
+        err.message,
+        "Generate a key with `openssl rand -base64 32` and store it as a Worker secret."
+      );
+    }
+    throw err;
+  }
+
+  const existing = await c.env.DB.prepare(
+    `SELECT id FROM payout_profiles WHERE workspace_id = ? AND kind = ?`
+  )
+    .bind(ctx.workspace.id, kind)
+    .first<{ id: string }>();
+  const ts = nowIso();
+  const id = existing?.id ?? uuid();
+  if (existing) {
+    // Any change requires re-approval: a verified target must never drift.
+    await c.env.DB.prepare(
+      `UPDATE payout_profiles SET label = ?, details_encrypted = ?, approved = 0 WHERE id = ?`
+    )
+      .bind(parsed.data.label, encrypted, id)
+      .run();
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO payout_profiles (id, workspace_id, kind, label, details_encrypted, approved, created_at)
+       VALUES (?, ?, ?, ?, ?, 0, ?)`
+    )
+      .bind(id, ctx.workspace.id, kind, parsed.data.label, encrypted, ts)
+      .run();
+  }
+
+  await audit(c, {
+    actor_user_id: ctx.membership.user_id,
+    workspace_id: ctx.workspace.id,
+    action: "billing.payout_profile_saved",
+    target_type: "payout_profile",
+    target_id: id,
+    detail: { kind, label: parsed.data.label, reapproval_required: Boolean(existing) },
+  });
+
+  return c.json(
+    {
+      id,
+      kind,
+      label: parsed.data.label,
+      approved: 0,
+      created_at: ts,
+      details_preview: payoutDetailsPreview(parsed.data.details),
+      note: "Saved encrypted. Full details are never returned; changes require fresh admin approval.",
+    },
+    existing ? 200 : 201
+  );
+});
+
+billingRoutes.delete("/workspace/:workspaceId/payout-profiles/:kind", async (c) => {
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  if (!ctx) {
+    const u = await getSessionUser(c);
+    return u ? forbidden(c) : unauthorized(c);
+  }
+  const kind = c.req.param("kind") as PayoutProfileKind;
+  if (!PAYOUT_PROFILE_KINDS.includes(kind)) return jsonError(c, 422, "Unknown payout profile kind");
+
+  const deleted = await c.env.DB.prepare(
+    `DELETE FROM payout_profiles WHERE workspace_id = ? AND kind = ?`
+  )
+    .bind(ctx.workspace.id, kind)
+    .run();
+  if ((deleted.meta?.changes ?? 0) === 0) return jsonError(c, 404, "Payout profile not found");
+
+  await audit(c, {
+    actor_user_id: ctx.membership.user_id,
+    workspace_id: ctx.workspace.id,
+    action: "billing.payout_profile_deleted",
+    target_type: "payout_profile",
+    target_id: kind,
+    detail: { kind },
+  });
+  return c.json({ ok: true });
 });

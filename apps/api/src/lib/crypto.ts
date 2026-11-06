@@ -117,3 +117,13 @@ export async function decryptField(cipherB64: string, secretB64: string): Promis
   const dec = await subtle().decrypt({ name: "AES-GCM", iv: iv as unknown as BufferSource }, key, raw.slice(12) as unknown as BufferSource);
   return new TextDecoder().decode(dec);
 }
+
+/** True when the configured secret is a base64-encoded 32-byte AES-256 key. */
+export function isValidAes256Key(secretB64: string | undefined): secretB64 is string {
+  if (!secretB64) return false;
+  try {
+    return fromB64(secretB64).length === 32;
+  } catch {
+    return false;
+  }
+}

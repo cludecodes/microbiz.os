@@ -10,3 +10,8 @@ LEMON_SQUEEZY_WEBHOOK_SECRET=local-sandbox-replace-me
 # Leave empty to keep hosted checkout disabled (fail closed).
 SAFEPAY_CHECKOUT_URL_TEMPLATE=
 LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE=
+
+# 32-byte base64 key used to encrypt payout-profile account details at rest
+# (AES-256-GCM). Generate once with: openssl rand -base64 32
+# Without it, saving payout profiles fails closed with 501.
+PAYOUT_ENCRYPTION_KEY=local-sandbox-replace-with-base64-32-bytes

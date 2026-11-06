@@ -29,10 +29,20 @@ npx wrangler secret put LEMON_SQUEEZY_WEBHOOK_SECRET
 # Optional per-plan hosted checkout links (see docs/providers.md)
 npx wrangler secret put SAFEPAY_CHECKOUT_URL_TEMPLATE
 npx wrangler secret put LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE
+# Encrypts payout-profile account details (AES-256-GCM). Generate once:
+#   openssl rand -base64 32
+npx wrangler secret put PAYOUT_ENCRYPTION_KEY
 ```
 
-Checkout and webhooks fail closed (501/401) until these are configured. Never
-put real credentials in `wrangler.jsonc` or any committed file.
+Checkout and webhooks fail closed (501/401) until these are configured; saving
+payout profiles fails closed (501) without `PAYOUT_ENCRYPTION_KEY`. Never put
+real credentials in `wrangler.jsonc` or any committed file. Rotating the payout
+key makes existing profiles undecryptable — owners must re-enter them.
+
+```bash
+# apply the M5b indexes (payout profile uniqueness, invoice payment lookups)
+npm run db:migrate:remote
+```
 
 ## 4. Deploy the worker
 
@@ -78,6 +88,13 @@ PWA: `manifest.webmanifest` + `sw.js` are served from `public/` automatically.
 - Confirm cookies are `Secure; HttpOnly; SameSite=Lax` in production.
 - Billing: hosted checkout returns 501 until secrets exist (expected); a bank
   checkout creates an `awaiting_confirmation` payment with an `MB-…` reference.
+- Payout profiles: saving works only with `PAYOUT_ENCRYPTION_KEY`; the response
+  must show a masked account (never the full IBAN/account number).
+- Invoice payment link: create one for a sent invoice; confirm it via a sandbox
+  webhook (hosted) or admin reconciliation (bank) and verify the invoice becomes
+  `paid` with a balanced ledger journal.
+- Settlement: mark a hosted payout settled with the real bank amount and verify
+  the `payout_fees` shortfall posting.
 - Super-admin `/api/admin/ledger` shows balanced journals only; no seeded rows.
 
 ## Rollback

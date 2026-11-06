@@ -11,6 +11,9 @@ export interface Env {
   // Owner-configured payment-link templates (one link per plan, sandbox first).
   SAFEPAY_CHECKOUT_URL_TEMPLATE?: string;
   LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE?: string;
+  // 32-byte base64 key for AES-256-GCM encrypted payout-profile details.
+  // Without it, writing payout profiles fails closed with 501.
+  PAYOUT_ENCRYPTION_KEY?: string;
 }
 
 export interface SessionUser {

@@ -1,4 +1,4 @@
-# Payment providers, webhooks and ledger (M5a)
+# Payment providers, webhooks and ledger (M5a–M5b)
 
 This document is the integration contract every payment adapter must satisfy.
 If a provider cannot satisfy it, the feature stays disabled — the codebase never
@@ -143,16 +143,79 @@ currency, positive integer minor units). Examples:
   `DR available_balance 1,200 · DR processing_fees 300 · CR gross_receipts 1,500`
 - Bank receipt ₨4,500 (money already in bank):
   `DR settled_bank 4,500 · CR gross_receipts 4,500`
-- Refund ₨500: `DR refunds 500 · CR available_balance 500`
+- Refund ₨500 before payout: `DR refunds 500 · CR available_balance 500`
+- Refund ₨500 after payout: `DR refunds 500 · CR settled_bank 500`
 - Provider payout ₨1,200 to bank: `DR settled_bank 1,200 · CR available_balance 1,200`
+- Payout ₨1,200 with a ₨50 payout fee: `DR settled_bank 1,150 · DR payout_fees 50 · CR available_balance 1,200`
 
 Settlement is tracked independently of payment status: a confirmed hosted
-payment can remain `settlement_status=pending` for days. Marking hosted
-settlements and issuing refunds through the API is the M5b scope; the shared
-posting builders already exist and are unit-tested.
+payment can remain `settlement_status=pending` for days.
+
+## Settlement marking (M5b)
+
+`POST /api/admin/payments/:id/settle` is a super-admin action performed after
+the real bank credit is checked. It refuses:
+
+- manual providers (they settle at confirmation),
+- payments already settled/inapplicable,
+- a received amount larger than `amount - fee - refund` (409).
+
+The request may omit `amount_minor` (defaults to net held funds) or pass the
+actual bank credit. Any shortfall is recorded as a `payout_fees` expense, which
+is essential for Lemon Squeezy because its merchant-of-record fee is deducted
+at payout rather than itemized per order. The payout reference is stored in the
+audit log; our `MB-…` payment reference is never overwritten. Automatically
+pulling provider payout reports remains **flagged for approval**.
+
+## Refunds (M5b)
+
+`POST /api/admin/payments/:id/refund` records a refund the admin has already
+executed in the provider dashboard or bank. It is deliberately not an automated
+provider API call (that remains flagged). Rules:
+
+- only `confirmed`/`refunded` payments; partial refunds allowed;
+- `amount_minor` must be positive and at most `amount - refund_minor`;
+- the guarded `UPDATE … WHERE refund_minor = <old>` prevents concurrent
+  over-refunds; the payment becomes `refunded` only when fully refunded;
+- if the receipt was already settled, the journal credits `settled_bank`;
+  otherwise it credits `available_balance`;
+- the admin must pass `provider_ref`/`reason` for the audit trail;
+- an invoice already marked `paid` stays paid when refunded (refunds are
+  financial events; invoice status is not rewound).
+
+## Payout profiles (M5b)
+
+Owners register payout targets through
+`/api/billing/workspace/:id/payout-profiles/:kind` (`safepay`, `bank_raast`,
+`lemonsqueezy`, `payoneer`). Details are an allowlisted object
+(`account_title`, `account_number`/`iban`, `bank_name`, `swift`, Payoneer
+email, country, note) encrypted with AES-256-GCM before insert. Reads return a
+masked preview only. Card numbers, CVVs, banking passwords and OTPs are rejected
+by strict validation. A missing/invalid `PAYOUT_ENCRYPTION_KEY` makes writes
+fail closed with 501. Any edit resets `approved = 0`; a super admin approves the
+masked target (or revokes it) via the admin endpoint.
+
+## Invoice payment links (M5b)
+
+`POST /api/invoices/:workspaceId/:docId/payment-link` turns a **sent** invoice
+into one payable intent for its full total:
+
+- hosted provider → signed webhook confirmation (amount/currency re-checked);
+- bank/Raast/Payoneer → admin verifies the real receipt against the `MB-…`
+  reference;
+- invoice payments have `plan_id = NULL` and never activate a subscription;
+- the invoice moves to `paid` only when confirmed receipts cover its total;
+- replaying the link returns the same pending intent (no duplicate payable
+  intents);
+- manually marking an invoice paid (or void) cancels pending intents so a later
+  webhook cannot double-count money.
 
 ## Explicit non-goals
 
 - No customer wallets or escrow: the platform never holds customer balances.
 - No invented bank balances, no seeded revenue rows, no mock "paid" statuses.
 - No paid third-party services added for this milestone.
+- No automatic provider payout reports or refund API calls yet; both are
+  admin-attested and flagged for approval.
+- Invoice payments are full-total only; partial invoice payments are not
+  modelled yet (a future enhancement, not silently accepted).

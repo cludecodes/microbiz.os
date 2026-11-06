@@ -33,7 +33,10 @@ export interface CheckoutInput {
   reference: string;
   amountMinor: number;
   currency: CurrencyCode;
+  /** Plan name (subscriptions) or a short subject (invoice payments). */
   planName: string;
+  /** Optional human label used in manual instructions, e.g. "invoice INV-0001". */
+  label?: string;
 }
 
 export interface CheckoutSession {
@@ -57,12 +60,16 @@ export function createCheckoutSession(env: Env, provider: BillingProvider, input
   }
 
   if (cap.mode === "manual") {
+    const subject = input.label ?? `${input.planName} plan`;
+    const after = input.label
+      ? "The invoice is marked paid only after an admin verifies the real receipt."
+      : "The plan activates only after an admin verifies the real receipt.";
     return {
       mode: "manual",
       redirectUrl: null,
       instructions:
-        `Send ${formatMoney(input.amountMinor, input.currency)} for the ${input.planName} plan via ${cap.label}, ` +
-        `using reference ${input.reference}. The plan activates only after an admin verifies the real receipt.`,
+        `Send ${formatMoney(input.amountMinor, input.currency)} for ${subject} via ${cap.label}, ` +
+        `using reference ${input.reference}. ${after}`,
     };
   }
 

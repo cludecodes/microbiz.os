@@ -9,6 +9,7 @@ import {
   constantTimeEqual,
   encryptField,
   decryptField,
+  isValidAes256Key,
 } from "../src/lib/crypto";
 
 describe("password hashing", () => {
@@ -79,5 +80,12 @@ describe("sensitive field encryption", () => {
     expect(a).not.toEqual(b); // random IV
     expect(await decryptField(a, secret)).toBe("IBAN: PK00TEST0000000000000000");
     await expect(decryptField(a, randBytesB64(32))).rejects.toThrow();
+  });
+
+  it("only accepts a base64 32-byte payout key", () => {
+    expect(isValidAes256Key(randBytesB64(32))).toBe(true);
+    expect(isValidAes256Key(randBytesB64(16))).toBe(false);
+    expect(isValidAes256Key("not-a-key")).toBe(false);
+    expect(isValidAes256Key(undefined)).toBe(false);
   });
 });

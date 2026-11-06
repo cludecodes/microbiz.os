@@ -12,8 +12,8 @@
 | M4b       | QR Restaurant Menu (public menu, scan metering, live availability) | ✅ |
 | M4c       | Invoices & quotations product            | ✅ |
 | M5a       | Billing core: plans, checkout intents, webhook verification, plan activation, double-entry ledger, manual reconciliation | ✅ |
-| M5b       | Settlement marking, refunds, payout profiles, invoice payment links | ⏳ next |
-| M6        | Super-admin analytics                      | ⏳ |
+| M5b       | Settlement marking, refunds, payout profiles, invoice payment links | ✅ |
+| M6        | Super-admin analytics                      | ⏳ next |
 | M7        | Marketing, referrals, affiliate commissions| ⏳ |
 | M8        | Security audit, coverage, production prep  | ⏳ |
 
@@ -45,8 +45,10 @@ with the i18n polish pass in M8 (the app shell itself is fully EN/UR today).
 - No feature above is enabled by default; hosted checkout and webhooks fail
   closed (501/401) until secrets and links are configured by the owner.
 - **Flagged for approval:** server-created hosted checkout via provider APIs
-  (currently owner-configured payment links), automated settlement marking for
-  hosted payouts, automated refunds, and server-side PDF generation.
+  (currently owner-configured payment links), automatic provider payout-report
+  ingestion, automated refund API calls, and server-side PDF generation.
+  M5b implements admin-attested settlement marking/refunds instead: the admin
+  checks the real bank/provider dashboard first, then records it here.
 
 ## Deliberate safety rails (per development rules)
 

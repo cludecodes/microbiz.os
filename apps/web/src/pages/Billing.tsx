@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
-import { Badge, Button, Card, ErrorText, PageTitle, Select, Table, cx } from "../components/ui";
+import { Badge, Button, Card, ErrorText, Input, PageTitle, Select, Table, cx } from "../components/ui";
 import { formatMoney, type CurrencyCode } from "@microbiz/shared";
 
 interface Plan {
@@ -45,9 +45,40 @@ interface Payment {
   refund_minor: number;
   plan_id: string | null;
   plan_name: string | null;
+  invoice_id: string | null;
+  invoice_number: string | null;
   created_at: string;
   confirmed_at: string | null;
 }
+
+interface PayoutDetailsPreview {
+  account_title: string | null;
+  institution: string | null;
+  identifier: string | null;
+  payoneer_email: string | null;
+}
+
+interface PayoutProfile {
+  id: string;
+  kind: string;
+  label: string;
+  approved: number;
+  created_at: string;
+  details_preview: PayoutDetailsPreview | null;
+  decryptable?: boolean;
+}
+
+interface PayoutData {
+  profiles: PayoutProfile[];
+  encryption_configured: boolean;
+}
+
+const PAYOUT_KIND_LABELS: Record<string, string> = {
+  safepay: "Safepay",
+  bank_raast: "Bank / Raast",
+  lemonsqueezy: "Lemon Squeezy",
+  payoneer: "Payoneer",
+};
 
 interface BillingData {
   subscription: Subscription;
@@ -93,14 +124,32 @@ export default function Billing() {
   const [busy, setBusy] = useState(false);
   const [providerFor, setProviderFor] = useState<Record<string, string>>({});
   const [checkout, setCheckout] = useState<CheckoutResult | null>(null);
+  const [payouts, setPayouts] = useState<PayoutData | null>(null);
+  const [payoutKind, setPayoutKind] = useState("bank_raast");
+  const [payoutLabel, setPayoutLabel] = useState("");
+  const [payoutTitle, setPayoutTitle] = useState("");
+  const [payoutAccount, setPayoutAccount] = useState("");
+  const [payoutBank, setPayoutBank] = useState("");
+  const [payoutEmail, setPayoutEmail] = useState("");
+  const [payoutBusy, setPayoutBusy] = useState(false);
+  const [payoutNotice, setPayoutNotice] = useState<string | null>(null);
   const pollCount = useRef(0);
+
+  const loadPayouts = useCallback(async () => {
+    if (!ws) return;
+    const res = await api.get<PayoutData>(`/api/billing/workspace/${ws.id}/payout-profiles`);
+    if (res.ok && res.data) setPayouts(res.data);
+    else if (res.error) setError(res.detail ?? res.error);
+  }, [ws]);
 
   const load = useCallback(async () => {
     if (!ws) return;
     const res = await api.get<BillingData>(`/api/billing/workspace/${ws.id}`);
-    if (res.ok && res.data) setData(res.data);
-    else if (res.error) setError(res.detail ?? res.error);
-  }, [ws]);
+    if (res.ok && res.data) {
+      setData(res.data);
+      if (res.data.can_manage_billing) await loadPayouts();
+    } else if (res.error) setError(res.detail ?? res.error);
+  }, [ws, loadPayouts]);
 
   useEffect(() => {
     load();
@@ -184,6 +233,50 @@ export default function Billing() {
     await load();
   }
 
+  async function savePayout() {
+    if (!ws) return;
+    setPayoutBusy(true);
+    setError(null);
+    setPayoutNotice(null);
+    const details: Record<string, string> = { account_title: payoutTitle.trim() };
+    if (payoutKind === "payoneer") {
+      if (payoutEmail.trim()) details.payoneer_email = payoutEmail.trim();
+    } else {
+      if (payoutAccount.trim()) details.account_number = payoutAccount.trim();
+      if (payoutBank.trim()) details.bank_name = payoutBank.trim();
+    }
+    const res = await api.post(`/api/billing/workspace/${ws.id}/payout-profiles/${payoutKind}`, {
+      label: payoutLabel.trim() || PAYOUT_KIND_LABELS[payoutKind],
+      details,
+    });
+    setPayoutBusy(false);
+    if (!res.ok) {
+      setError(res.detail ?? res.error ?? "Could not save the payout profile");
+      return;
+    }
+    setPayoutNotice("Saved encrypted. Changes reset approval, so an admin must re-approve the target.");
+    setPayoutLabel("");
+    setPayoutTitle("");
+    setPayoutAccount("");
+    setPayoutBank("");
+    setPayoutEmail("");
+    await loadPayouts();
+  }
+
+  async function removePayout(kind: string) {
+    if (!ws) return;
+    if (!window.confirm(`Delete the ${PAYOUT_KIND_LABELS[kind] ?? kind} payout profile?`)) return;
+    setPayoutBusy(true);
+    setError(null);
+    const res = await api.del(`/api/billing/workspace/${ws.id}/payout-profiles/${kind}`);
+    setPayoutBusy(false);
+    if (!res.ok) {
+      setError(res.detail ?? res.error ?? "Could not delete the payout profile");
+      return;
+    }
+    await loadPayouts();
+  }
+
   return (
     <div>
       <PageTitle
@@ -236,6 +329,106 @@ export default function Billing() {
           </ul>
         </Card>
       </div>
+
+      {data.can_manage_billing && (
+        <Card title="Payout profiles (encrypted at rest)" className="mt-5">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Register the bank, Raast, Safepay, Lemon Squeezy or Payoneer target where real payouts land.
+            Details are AES-256-GCM encrypted and never shown back in full.
+          </p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-500">Provider target</span>
+              <Select value={payoutKind} onChange={(e) => setPayoutKind(e.target.value)}>
+                {Object.entries(PAYOUT_KIND_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <Input
+              placeholder="Label (e.g. Main bank)"
+              value={payoutLabel}
+              onChange={(e) => setPayoutLabel(e.target.value)}
+            />
+            <Input
+              placeholder="Account title"
+              value={payoutTitle}
+              onChange={(e) => setPayoutTitle(e.target.value)}
+            />
+            {payoutKind === "payoneer" ? (
+              <Input
+                type="email"
+                placeholder="Payoneer email"
+                value={payoutEmail}
+                onChange={(e) => setPayoutEmail(e.target.value)}
+              />
+            ) : (
+              <>
+                <Input
+                  placeholder="Account number / IBAN"
+                  value={payoutAccount}
+                  onChange={(e) => setPayoutAccount(e.target.value)}
+                />
+                <Input
+                  placeholder="Bank name (optional)"
+                  value={payoutBank}
+                  onChange={(e) => setPayoutBank(e.target.value)}
+                />
+              </>
+            )}
+          </div>
+          <div className="mt-3">
+            <Button onClick={savePayout} disabled={payoutBusy || !payoutTitle.trim()}>
+              {payoutBusy ? "Saving…" : "Save encrypted profile"}
+            </Button>
+          </div>
+          {payouts && !payouts.encryption_configured && (
+            <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+              Server encryption key is missing. Saving fails closed with 501 until PAYOUT_ENCRYPTION_KEY is set.
+            </p>
+          )}
+          {payoutNotice && (
+            <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+              {payoutNotice}
+            </p>
+          )}
+          {payouts && payouts.profiles.length > 0 && (
+            <div className="mt-4">
+              <Table head={["Target", "Label", "Account", "Approval", ""]}>
+                {payouts.profiles.map((profile) => (
+                  <tr key={profile.id}>
+                    <td className="px-3 py-2 text-xs">{PAYOUT_KIND_LABELS[profile.kind] ?? profile.kind}</td>
+                    <td className="px-3 py-2">{profile.label}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">
+                      {profile.details_preview
+                        ? [profile.details_preview.account_title, profile.details_preview.institution, profile.details_preview.identifier ?? profile.details_preview.payoneer_email]
+                            .filter(Boolean)
+                            .join(" · ")
+                        : "Key unavailable — re-enter the profile"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Badge tone={profile.approved ? "green" : "amber"}>
+                        {profile.approved ? "approved" : "awaiting review"}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <Button variant="ghost" onClick={() => removePayout(profile.kind)} disabled={payoutBusy}>
+                        Remove
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </Table>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-slate-400">
+            Never enter card numbers, CVVs, banking passwords or OTPs. Only account metadata is accepted; the API
+            rejects unknown fields. Updating a profile sets it back to “awaiting review”.
+          </p>
+        </Card>
+      )}
 
       {checkout && (
         <Card title="Checkout in progress" className="mt-5">
@@ -348,7 +541,9 @@ export default function Billing() {
             {data.payments.map((p) => (
               <tr key={p.id}>
                 <td className="px-3 py-2 text-xs text-slate-500">{p.created_at.slice(0, 10)}</td>
-                <td className="px-3 py-2">{p.plan_name ?? "—"}</td>
+                <td className="px-3 py-2">
+                  {p.plan_name ?? (p.invoice_number ? `Invoice ${p.invoice_number}` : "—")}
+                </td>
                 <td className="px-3 py-2 text-xs">{p.provider}</td>
                 <td className="px-3 py-2 font-medium">
                   {formatMoney(p.amount_minor, p.currency as CurrencyCode)}

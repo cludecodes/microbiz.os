@@ -48,7 +48,10 @@ microbiz-os/
       signature-verified webhooks with idempotency and amount/currency/reference
       re-checks, atomic plan activation, balanced double-entry ledger postings,
       super-admin manual receipt reconciliation, billing UI + admin views
-- [ ] **M5b** Settlement marking, refunds, payout profiles, invoice payment links
+- [x] **M5b** Settlement marking for hosted payouts (with payout-fee shortfall),
+      admin-attested partial/full refunds (settled vs held funds), AES-256-GCM
+      encrypted payout profiles with admin approval, and full-total invoice
+      payment links that become `paid` only after verified confirmation
 - [ ] **M6** Super-admin analytics deepening
 - [ ] **M7** Marketing, referrals, affiliate commissions
 - [ ] **M8** Security hardening, coverage, production prep
@@ -75,6 +78,7 @@ npm run test              # all workspaces (vitest + real-workerd integration su
 #   test/qrmenu.mjs     QR menu + public endpoint metering
 #   test/invoices.mjs   invoices & quotations
 #   test/billing.mjs    plans, checkout, webhooks, ledger, reconciliation (66 checks)
+#   test/m5b.mjs        settlements, refunds, payout profiles, invoice links (68 checks)
 ```
 
 ## Principles

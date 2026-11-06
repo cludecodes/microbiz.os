@@ -64,10 +64,15 @@ Deny-by-default: features absent from the plan's limits map are refused.
 | PATCH  | `/api/admin/plans/:planId` | `{price_minor?, is_active?, is_public?}` — audited; price is config, not revenue |
 | GET    | `/api/admin/payments`  | Latest 200 payments; `?status=` / `?provider=` filters |
 | POST   | `/api/admin/payments/:paymentId/confirm` | Manual receipt reconciliation (bank/Raast/Payoneer only) — see billing |
+| POST   | `/api/admin/payments/:paymentId/refund` | `{amount_minor, reason?, provider_ref?}` — records an already-executed refund (partial allowed) |
+| POST   | `/api/admin/payments/:paymentId/settle` | `{amount_minor?, provider_ref?}` — marks a hosted payout settled after checking the bank |
+| GET    | `/api/admin/settlements` | Bank/Raast reconciliation rows + pending/settled hosted payouts |
+| GET    | `/api/admin/payout-profiles` | All payout targets, masked; never returns encrypted plaintext |
+| POST   | `/api/admin/payout-profiles/:profileId/approval` | `{approved}` — approve/revoke a payout target |
 | GET    | `/api/admin/subscriptions` | Latest 200 subscriptions with workspace + plan |
 | GET    | `/api/admin/ledger`    | Latest 100 journals + postings + per-account totals; `?workspace_id=` scopes all three |
 
-## Billing & subscriptions (`/api/billing`, M5a)
+## Billing & subscriptions (`/api/billing`, M5a–M5b)
 
 | Method | Path                                             | Min role | Description |
 | ------ | ------------------------------------------------ | -------- | ----------- |
@@ -77,6 +82,9 @@ Deny-by-default: features absent from the plan's limits map are refused.
 | POST   | `/api/billing/workspace/:workspaceId/checkout`   | owner    | `{plan_id, provider, idempotency_key?}` → 201 `{payment, checkout}` |
 | POST   | `/api/billing/workspace/:workspaceId/downgrade`  | owner    | Immediate switch to Free (no partial refunds) |
 | GET    | `/api/billing/workspace/:workspaceId/payments/:paymentId` | member | Payment status (polling for hosted checkout) |
+| GET    | `/api/billing/workspace/:workspaceId/payout-profiles` | owner | Masked payout targets + `encryption_configured` |
+| POST   | `/api/billing/workspace/:workspaceId/payout-profiles/:kind` | owner | `{label, details}` — AES-256-GCM encrypted; resets approval |
+| DELETE | `/api/billing/workspace/:workspaceId/payout-profiles/:kind` | owner | Remove one payout target |
 
 Billing rules enforced server-side:
 
@@ -97,7 +105,18 @@ Billing rules enforced server-side:
   into `settled_bank`. Refunds and settlements have their own balanced builders.
 - **Settlement is independent of payment status**: hosted receipts start
   `settlement_status = pending`; reconciled bank receipts are `settled` with
-  `settled_at` set. Marking hosted payouts as settled is M5b.
+  `settled_at` set. A super admin marks a hosted payout settled only after
+  checking the real bank credit (`settlePayment`). If the credit is smaller than
+  net held funds, the difference is posted to `payout_fees`.
+- **Refunds are admin-attested, never browser-driven**: `POST
+  /api/admin/payments/:id/refund` records a refund the admin already executed in
+  the provider dashboard/bank. Partial and full refunds are supported; the
+  guarded update prevents over-refunding. A settled receipt refunds from
+  `settled_bank`; an unsettled receipt reduces `available_balance`.
+- **Payout profiles are write-only**: details are validated against an
+  allowlist, encrypted with AES-256-GCM (`PAYOUT_ENCRYPTION_KEY`), and returned
+  only as a masked preview. Unknown fields (card number, CVV, password, OTP) are
+  rejected; changing a profile resets admin approval. Missing key → 501.
 - **Currency pinning**: PKR workspaces buy PKR plans only; USD workspaces buy
   USD plans only. Provider/currency mismatches are 422.
 - **No hosted checkout without configuration**: missing webhook secret or
@@ -207,8 +226,9 @@ they move forward or are voided, never destroyed.
 | ------ | ------------------------------------- | -------- | --------------------------------------------------------------- |
 | GET    | `/api/invoices/:workspaceId`          | member   | Documents (200 max, newest first); `?type=invoice\|quotation` filter |
 | POST   | `/api/invoices/:workspaceId`          | member   | Create draft — see body below → 201 `{document, items}`         |
-| GET    | `/api/invoices/:workspaceId/:docId`   | member   | Document + line items                                           |
+| GET    | `/api/invoices/:workspaceId/:docId`   | member   | Document + line items + payment intents                         |
 | PATCH  | `/api/invoices/:workspaceId/:docId`   | member   | `{status}` — forward-only transition, 409 on invalid move        |
+| POST   | `/api/invoices/:workspaceId/:docId/payment-link` | member | `{provider}` — create/replay a payable link for a sent invoice |
 
 POST body: `{type, customer_id? | client_name, client_email?, client_address?,
 due_date? (invoices only, YYYY-MM-DD), tax_minor?, notes?, items:[{name,
@@ -229,9 +249,15 @@ Financial integrity rules enforced server-side:
   explanation.
 - **Status is audited**: every transition writes an audit entry with from/to.
 - **Manual `paid` = owner attestation** (they received the money outside the
-  platform). Verified provider settlement for invoices (paying an invoice
-  through a hosted checkout) is the next billing step (M5b); subscription
-  payments already require a verified event before activation (see Billing).
+  platform). It also cancels any pending online payment intent for that invoice,
+  so a later webhook cannot double-count the same money.
+- **Verified invoice payment (M5b)**: `POST …/:docId/payment-link` creates one
+  payment intent for the full invoice total (the same pending link is replayed
+  instead of duplicated). A hosted link returns the configured checkout URL; a
+  bank/Raast/Payoneer link returns transfer instructions and an `MB-…` reference.
+  The invoice becomes `paid` **only** when confirmed receipts cover its total —
+  via a signed webhook or an admin-verified bank receipt. Invoice payments carry
+  `plan_id = NULL`, so they never activate a subscription.
 - **PDF export**: the print view (`/app/invoices/:docId/print`) uses the
   browser's print dialog — free, no third-party service. Server-side PDF
   generation is **flagged for approval** before it ships (see roadmap).

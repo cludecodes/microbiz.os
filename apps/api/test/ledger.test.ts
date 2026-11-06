@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { validateJournal } from "@microbiz/shared";
+import {
+  addBillingMonth,
+  receiptPostings,
+  refundPostings,
+  settlementPostings,
+  validateJournal,
+} from "@microbiz/shared";
 
 /**
  * Double-entry ledger contract used by the payments milestone:
@@ -48,5 +54,35 @@ describe("payment ledger postings", () => {
         ],
       }).ok
     ).toBe(false);
+  });
+
+  it("builds a balanced hosted-receipt journal including the provider fee", () => {
+    const postings = receiptPostings(1500000, 30000, "PKR", { settledDirectly: false });
+    expect(validateJournal({ postings })).toEqual({ ok: true });
+    const net = postings.find((p) => p.account === "available_balance");
+    expect(net?.amount_minor).toBe(1470000);
+  });
+
+  it("builds a balanced direct receipt for bank transfers without a fee line", () => {
+    const postings = receiptPostings(1500000, 0, "PKR", { settledDirectly: true });
+    expect(validateJournal({ postings })).toEqual({ ok: true });
+    expect(postings.map((p) => p.account)).toEqual(["settled_bank", "gross_receipts"]);
+  });
+
+  it("refuses a fee that exceeds the receipt", () => {
+    expect(() => receiptPostings(1000, 1000, "PKR", { settledDirectly: false })).toThrow();
+    expect(() => receiptPostings(1000, 1500, "PKR", { settledDirectly: false })).toThrow();
+  });
+
+  it("builds balanced refund and settlement journals", () => {
+    expect(validateJournal({ postings: refundPostings(5000, "USD") })).toEqual({ ok: true });
+    expect(validateJournal({ postings: settlementPostings(1470000, "PKR") })).toEqual({ ok: true });
+  });
+
+  it("adds a calendar month and clamps month-end dates", () => {
+    expect(addBillingMonth("2026-01-31T10:00:00.000Z")).toBe("2026-02-28T10:00:00.000Z");
+    expect(addBillingMonth("2024-01-31T00:00:00.000Z")).toBe("2024-02-29T00:00:00.000Z");
+    expect(addBillingMonth("2026-11-06T08:30:00.000Z")).toBe("2026-12-06T08:30:00.000Z");
+    expect(addBillingMonth("2026-12-15T08:30:00.000Z")).toBe("2027-01-15T08:30:00.000Z");
   });
 });

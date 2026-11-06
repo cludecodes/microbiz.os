@@ -125,9 +125,24 @@ export function clearLocalRateLimits() {
   }
 }
 
+/**
+ * Fixed sandbox values for integration tests ONLY. They are passed via
+ * `wrangler dev --var`, never written to the repo's config, and match
+ * nothing in production (production secrets are `wrangler secret put`).
+ */
+export const TEST_PROVIDER_VARS = {
+  SAFEPAY_WEBHOOK_SECRET: "test-safepay-secret",
+  LEMON_SQUEEZY_WEBHOOK_SECRET: "test-lemonsqueezy-secret",
+  SAFEPAY_CHECKOUT_URL_TEMPLATE: "https://sandbox.getsafepay.example/pay/test-link",
+  LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE: "https://test-store.lemonsqueezy.com/buy/test-variant",
+};
+
 export function bootWrangler(portNumber) {
   const isWin = process.platform === "win32";
-  const child = spawn(`npx wrangler dev --port ${portNumber} --local`, {
+  const varArgs = Object.entries(TEST_PROVIDER_VARS)
+    .map(([k, v]) => `--var ${k}:${v}`)
+    .join(" ");
+  const child = spawn(`npx wrangler dev --port ${portNumber} --local ${varArgs}`, {
     stdio: ["ignore", "pipe", "pipe"],
     cwd: process.cwd(),
     shell: true,

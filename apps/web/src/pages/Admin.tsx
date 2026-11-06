@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
-import { Card, PageTitle, Table } from "../components/ui";
+import { Badge, Button, Card, ErrorText, Input, PageTitle, Table } from "../components/ui";
+import { formatMoney, toMinorUnits, type CurrencyCode } from "@microbiz/shared";
 
 interface Summary {
   users: number;
@@ -19,11 +20,107 @@ interface AuditLog {
   detail: string;
 }
 
+interface AdminPlan {
+  id: string;
+  name: string;
+  price_minor: number;
+  currency: CurrencyCode;
+  limits: string;
+  features: string;
+  is_active: number;
+  is_public: number;
+  sort: number;
+  active_subs: number;
+}
+
+interface AdminPayment {
+  id: string;
+  workspace_id: string;
+  workspace_name: string;
+  plan_id: string | null;
+  plan_name: string | null;
+  provider: string;
+  provider_txn_ref: string | null;
+  amount_minor: number;
+  fee_minor: number;
+  currency: CurrencyCode;
+  status: string;
+  settlement_status: string;
+  refund_minor: number;
+  created_at: string;
+  confirmed_at: string | null;
+}
+
+interface LedgerTotal {
+  account: string;
+  currency: CurrencyCode;
+  debit_minor: number;
+  credit_minor: number;
+}
+
+interface LedgerPosting {
+  account: string;
+  direction: "DEBIT" | "CREDIT";
+  amount_minor: number;
+}
+
+interface LedgerJournal {
+  id: string;
+  memo: string;
+  currency: CurrencyCode;
+  ref_type: string | null;
+  ref_id: string | null;
+  created_at: string;
+  postings: LedgerPosting[];
+}
+
+const MANUAL_PROVIDERS = ["bank", "raast", "payoneer", "manual"];
+
+const STATUS_TONE: Record<string, "slate" | "green" | "amber" | "blue" | "rose"> = {
+  confirmed: "green",
+  awaiting_confirmation: "amber",
+  initiated: "amber",
+  failed: "rose",
+  refunded: "slate",
+  canceled: "slate",
+};
+
+const SETTLEMENT_TONE: Record<string, "slate" | "green" | "amber" | "rose"> = {
+  settled: "green",
+  pending: "amber",
+  mismatch: "rose",
+  not_applicable: "slate",
+};
+
 export default function Admin() {
   const { user } = useAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [plans, setPlans] = useState<AdminPlan[]>([]);
+  const [payments, setPayments] = useState<AdminPayment[]>([]);
+  const [journals, setJournals] = useState<LedgerJournal[]>([]);
+  const [totals, setTotals] = useState<LedgerTotal[]>([]);
   const [forbidden, setForbidden] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const [reconcileId, setReconcileId] = useState<string | null>(null);
+  const [reconcileAmount, setReconcileAmount] = useState("");
+  const [reconcileRef, setReconcileRef] = useState("");
+
+  const loadBilling = useCallback(async () => {
+    const [p, pm, led] = await Promise.all([
+      api.get<{ plans: AdminPlan[] }>("/api/admin/plans"),
+      api.get<{ payments: AdminPayment[] }>("/api/admin/payments"),
+      api.get<{ journals: LedgerJournal[]; totals: LedgerTotal[] }>("/api/admin/ledger"),
+    ]);
+    if (p.ok && p.data) setPlans(p.data.plans);
+    if (pm.ok && pm.data) setPayments(pm.data.payments);
+    if (led.ok && led.data) {
+      setJournals(led.data.journals);
+      setTotals(led.data.totals);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -33,14 +130,64 @@ export default function Admin() {
         api.get<{ logs: AuditLog[] }>("/api/admin/audit-logs"),
       ]);
       if (cancelled) return;
-      if (s.status === 403 || l.status === 403) setForbidden(true);
+      if (s.status === 403 || l.status === 403) {
+        setForbidden(true);
+        return;
+      }
       if (s.ok) setSummary(s.data);
       if (l.ok) setLogs(l.data!.logs);
+      await loadBilling();
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadBilling]);
+
+  async function togglePlan(plan: AdminPlan, field: "is_active" | "is_public") {
+    setActionError(null);
+    setNotice(null);
+    const res = await api.patch(`/api/admin/plans/${plan.id}`, { [field]: plan[field] !== 1 });
+    if (!res.ok) {
+      setActionError(res.detail ?? res.error ?? "Plan update failed");
+      return;
+    }
+    setNotice(`${plan.name}: ${field === "is_active" ? "availability" : "visibility"} updated.`);
+    await loadBilling();
+  }
+
+  function beginReconcile(payment: AdminPayment) {
+    setReconcileId(payment.id);
+    setReconcileAmount((payment.amount_minor / 100).toString());
+    setReconcileRef(payment.provider_txn_ref ?? "");
+    setActionError(null);
+  }
+
+  async function confirmReceipt(payment: AdminPayment) {
+    setActionError(null);
+    setNotice(null);
+    let amountMinor: number;
+    try {
+      amountMinor = toMinorUnits(reconcileAmount, payment.currency);
+    } catch {
+      setActionError("Enter the amount exactly as it appears on the bank statement.");
+      return;
+    }
+    const res = await api.post<{ plan_activated: string | null; journal_id: string }>(
+      `/api/admin/payments/${payment.id}/confirm`,
+      { amount_minor: amountMinor, reference: reconcileRef }
+    );
+    if (!res.ok) {
+      setActionError(res.detail ?? res.error ?? "Reconciliation failed");
+      return;
+    }
+    setNotice(
+      `Receipt confirmed for ${payment.workspace_name}. ` +
+        (res.data?.plan_activated ? `Plan activated: ${res.data.plan_activated}. ` : "") +
+        "Ledger journal posted."
+    );
+    setReconcileId(null);
+    await loadBilling();
+  }
 
   if (forbidden || user?.is_super_admin !== 1) {
     return (
@@ -50,23 +197,37 @@ export default function Admin() {
     );
   }
 
+  const pendingManual = payments.filter(
+    (p) => MANUAL_PROVIDERS.includes(p.provider) && ["initiated", "awaiting_confirmation"].includes(p.status)
+  );
+
   return (
     <div>
       <PageTitle title="Super admin" subtitle="Platform-wide controls. Server-side super-admin check on every request." />
+
+      <ErrorText>{actionError}</ErrorText>
+      {notice && (
+        <p className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+          {notice}
+        </p>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-4">
         {summary && (
           <>
             <Card title="Users">{summary.users}</Card>
             <Card title="Workspaces">{summary.workspaces}</Card>
-            <Card title="Active plans" className="lg:col-span-2">
+            <Card title="Pending manual receipts">{pendingManual.length}</Card>
+            <Card title="Active plans">
               {summary.active_subscriptions.length === 0 ? (
                 <p className="text-sm text-slate-500">None yet</p>
               ) : (
                 <ul className="space-y-1 text-sm">
                   {summary.active_subscriptions.map((s) => (
                     <li key={`${s.plan_name}-${s.currency}`} className="flex justify-between">
-                      <span>{s.plan_name} ({s.currency})</span>
+                      <span>
+                        {s.plan_name} ({s.currency})
+                      </span>
                       <span className="font-medium">{s.n}</span>
                     </li>
                   ))}
@@ -83,6 +244,156 @@ export default function Admin() {
           </>
         )}
       </div>
+
+      <Card title={`Payments (${payments.length})`} className="mt-5">
+        {payments.length === 0 ? (
+          <p className="py-4 text-sm text-slate-500">No payments yet.</p>
+        ) : (
+          <Table head={["Created", "Workspace", "Plan", "Provider", "Amount", "Payment", "Settlement", "Reference", ""]}>
+            {payments.map((p) => (
+              <tr key={p.id} className="align-top">
+                <td className="px-3 py-2 text-xs text-slate-500">{p.created_at.slice(0, 10)}</td>
+                <td className="px-3 py-2">{p.workspace_name}</td>
+                <td className="px-3 py-2 text-xs">{p.plan_name ?? "—"}</td>
+                <td className="px-3 py-2 text-xs">{p.provider}</td>
+                <td className="px-3 py-2 font-medium">{formatMoney(p.amount_minor, p.currency)}</td>
+                <td className="px-3 py-2">
+                  <Badge tone={STATUS_TONE[p.status] ?? "slate"}>{p.status}</Badge>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge tone={SETTLEMENT_TONE[p.settlement_status] ?? "slate"}>{p.settlement_status}</Badge>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{p.provider_txn_ref ?? "—"}</td>
+                <td className="px-3 py-2 text-right">
+                  {MANUAL_PROVIDERS.includes(p.provider) &&
+                    ["initiated", "awaiting_confirmation"].includes(p.status) &&
+                    (reconcileId === p.id ? (
+                      <div className="flex min-w-[13rem] flex-col gap-2">
+                        <Input
+                          value={reconcileAmount}
+                          onChange={(e) => setReconcileAmount(e.target.value)}
+                          placeholder={`Amount (${p.currency})`}
+                          inputMode="decimal"
+                          aria-label="Amount received in bank statement"
+                        />
+                        <Input
+                          value={reconcileRef}
+                          onChange={(e) => setReconcileRef(e.target.value)}
+                          placeholder="Transfer reference"
+                          aria-label="Transfer reference"
+                        />
+                        <div className="flex gap-2">
+                          <Button onClick={() => confirmReceipt(p)}>Confirm</Button>
+                          <Button variant="ghost" onClick={() => setReconcileId(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button variant="secondary" onClick={() => beginReconcile(p)}>
+                        Reconcile
+                      </Button>
+                    ))}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+        <p className="mt-3 text-xs text-slate-400">
+          Hosted provider payments (Safepay, Lemon Squeezy) can only be confirmed by their signed webhook — the
+          reconcile action is intentionally hidden for them.
+        </p>
+      </Card>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <Card title="Plans">
+          <Table head={["Plan", "Price", "Active", "Public", "Subs", ""]}>
+            {plans.map((plan) => (
+              <tr key={plan.id}>
+                <td className="px-3 py-2">
+                  <span className="font-medium">{plan.name}</span>
+                  <span className="block font-mono text-xs text-slate-500">{plan.id}</span>
+                </td>
+                <td className="px-3 py-2 text-sm">{formatMoney(plan.price_minor, plan.currency)}</td>
+                <td className="px-3 py-2">
+                  <Badge tone={plan.is_active === 1 ? "green" : "slate"}>{plan.is_active === 1 ? "yes" : "no"}</Badge>
+                </td>
+                <td className="px-3 py-2">
+                  <Badge tone={plan.is_public === 1 ? "blue" : "slate"}>{plan.is_public === 1 ? "yes" : "no"}</Badge>
+                </td>
+                <td className="px-3 py-2 text-sm">{plan.active_subs}</td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button variant="ghost" onClick={() => togglePlan(plan, "is_active")}>
+                      {plan.is_active === 1 ? "Disable" : "Enable"}
+                    </Button>
+                    <Button variant="ghost" onClick={() => togglePlan(plan, "is_public")}>
+                      {plan.is_public === 1 ? "Hide" : "Publish"}
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        </Card>
+
+        <Card title="Ledger totals (all verified money events)">
+          {totals.length === 0 ? (
+            <p className="py-4 text-sm text-slate-500">
+              No journals yet. They appear only after a verified receipt, refund or settlement.
+            </p>
+          ) : (
+            <Table head={["Currency", "Account", "Debits", "Credits"]}>
+              {totals.map((t) => (
+                <tr key={`${t.currency}-${t.account}`}>
+                  <td className="px-3 py-2 text-xs">{t.currency}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{t.account}</td>
+                  <td className="px-3 py-2 text-sm">{formatMoney(t.debit_minor, t.currency)}</td>
+                  <td className="px-3 py-2 text-sm">{formatMoney(t.credit_minor, t.currency)}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </Card>
+      </div>
+
+      <Card title="Recent ledger journals" className="mt-5">
+        {journals.length === 0 ? (
+          <p className="py-4 text-sm text-slate-500">No journals yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {journals.slice(0, 12).map((j) => {
+              const debits = j.postings
+                .filter((p) => p.direction === "DEBIT")
+                .reduce((sum, p) => sum + p.amount_minor, 0);
+              const credits = j.postings
+                .filter((p) => p.direction === "CREDIT")
+                .reduce((sum, p) => sum + p.amount_minor, 0);
+              return (
+                <div key={j.id} className="rounded-lg border border-slate-200 p-3 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="font-mono text-slate-500">{j.created_at.replace("T", " ").slice(0, 19)}</span>
+                    <Badge tone={debits === credits ? "green" : "rose"}>
+                      {debits === credits ? "balanced" : "UNBALANCED"}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">{j.memo}</p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                    {j.postings.map((p, idx) => (
+                      <span key={idx} className="font-mono">
+                        {p.direction === "DEBIT" ? "DR" : "CR"} {p.account} {formatMoney(p.amount_minor, j.currency)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-slate-400">
+          Every journal is validated (balanced, single currency) before insert. {journals.length} shown max 12.
+        </p>
+      </Card>
 
       <Card title="Security audit log (latest 200)" className="mt-5">
         <Table head={["Time", "Action", "Actor", "Workspace"]}>

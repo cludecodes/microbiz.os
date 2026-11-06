@@ -1,0 +1,12 @@
+# Copy to .dev.vars (gitignored) for LOCAL development secrets.
+# NEVER commit the real .dev.vars file.
+
+# Payment provider webhook secrets (sandbox values only).
+SAFEPAY_WEBHOOK_SECRET=local-sandbox-replace-me
+LEMON_SQUEEZY_WEBHOOK_SECRET=local-sandbox-replace-me
+
+# Hosted checkout payment-link templates (one link per plan, created in the
+# provider dashboard). The app appends the payment reference as a query param.
+# Leave empty to keep hosted checkout disabled (fail closed).
+SAFEPAY_CHECKOUT_URL_TEMPLATE=
+LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE=

@@ -12,6 +12,7 @@ import CRM from "./pages/CRM";
 import QRMenu from "./pages/QRMenu";
 import Invoices from "./pages/Invoices";
 import InvoicePrint from "./pages/InvoicePrint";
+import Billing from "./pages/Billing";
 import PublicMenu from "./pages/PublicMenu";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
@@ -61,6 +62,7 @@ export default function App() {
         {/* Printable document view — browser print dialog is the free PDF path. */}
         <Route path="invoices/:documentId/print" element={<InvoicePrint />} />
         <Route path="apps/:appId" element={<AppModule />} />
+        <Route path="billing" element={<Billing />} />
         <Route path="settings" element={<Settings />} />
         <Route path="admin" element={<Admin />} />
       </Route>

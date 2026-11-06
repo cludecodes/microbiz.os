@@ -25,8 +25,14 @@ npm run db:seed:remote
 
 ```bash
 npx wrangler secret put SAFEPAY_WEBHOOK_SECRET
-npx wrangler secret put LEMON_SQUEEZE_WEBHOOK_SECRET
+npx wrangler secret put LEMON_SQUEEZY_WEBHOOK_SECRET
+# Optional per-plan hosted checkout links (see docs/providers.md)
+npx wrangler secret put SAFEPAY_CHECKOUT_URL_TEMPLATE
+npx wrangler secret put LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE
 ```
+
+Checkout and webhooks fail closed (501/401) until these are configured. Never
+put real credentials in `wrangler.jsonc` or any committed file.
 
 ## 4. Deploy the worker
 
@@ -49,13 +55,30 @@ npx wrangler pages deploy dist --project-name microbiz-web
 
 PWA: `manifest.webmanifest` + `sw.js` are served from `public/` automatically.
 
-## 6. Post-deploy checks
+## 6. Payment provider onboarding (M5)
+
+1. Create the provider account in **sandbox** first (Safepay / Lemon Squeezy).
+2. Create one payment link per plan in the provider dashboard.
+3. Set the webhook endpoint to `https://<api-domain>/api/webhooks/safepay` or
+   `/api/webhooks/lemonsqueezy`.
+4. Store the signing secret and link template with `wrangler secret put`
+   (names above), then redeploy so the Worker sees them.
+5. Send a sandbox event and confirm: invalid signature → 401, valid event with
+   the wrong amount → 409 and the payment stays pending, valid event → 200 with
+   `confirmed: true`, plan switched and one balanced ledger journal.
+6. Only then switch the provider dashboard to live mode. See
+   [docs/providers.md](providers.md) for payload contracts and the ledger rules.
+
+## 7. Post-deploy checks
 
 - `GET /api/health` → 200
 - `GET /api/ready` → 200 (D1 reachable)
 - Register a user, create a workspace, add a member by email, verify the audit
   log in the super-admin view.
 - Confirm cookies are `Secure; HttpOnly; SameSite=Lax` in production.
+- Billing: hosted checkout returns 501 until secrets exist (expected); a bank
+  checkout creates an `awaiting_confirmation` payment with an `MB-…` reference.
+- Super-admin `/api/admin/ledger` shows balanced journals only; no seeded rows.
 
 ## Rollback
 

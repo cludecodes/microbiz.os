@@ -44,7 +44,11 @@ microbiz-os/
       totals, per-type lifecycles (invoice/quotation), monthly metering (Free:
       5/month), void-not-delete policy, print view (browser PDF, no paid deps)
       — API + module UI + integration tests (Phase 1 complete)
-- [ ] **M5** Subscriptions, payment providers, settlement + ledger posting
+- [x] **M5a** Billing core: plan catalog, checkout intents (hosted + manual),
+      signature-verified webhooks with idempotency and amount/currency/reference
+      re-checks, atomic plan activation, balanced double-entry ledger postings,
+      super-admin manual receipt reconciliation, billing UI + admin views
+- [ ] **M5b** Settlement marking, refunds, payout profiles, invoice payment links
 - [ ] **M6** Super-admin analytics deepening
 - [ ] **M7** Marketing, referrals, affiliate commissions
 - [ ] **M8** Security hardening, coverage, production prep
@@ -64,8 +68,13 @@ your first workspace created automatically.
 ## Tests
 
 ```bash
-npm run test              # all workspaces (vitest)
-# API integration tests run against a real workerd + local D1 (cloudflare:test)
+npm run test              # all workspaces (vitest + real-workerd integration suites)
+# API integration suites boot a real `wrangler dev` against local D1:
+#   test/smoke.mjs      platform/auth security
+#   test/crm.mjs        WhatsApp CRM & orders
+#   test/qrmenu.mjs     QR menu + public endpoint metering
+#   test/invoices.mjs   invoices & quotations
+#   test/billing.mjs    plans, checkout, webhooks, ledger, reconciliation (66 checks)
 ```
 
 ## Principles

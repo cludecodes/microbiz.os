@@ -11,7 +11,8 @@
 | M4a       | WhatsApp CRM & Order Manager (contacts, catalog, orders pipeline, metering) | ✅ |
 | M4b       | QR Restaurant Menu (public menu, scan metering, live availability) | ✅ |
 | M4c       | Invoices & quotations product            | ✅ |
-| M5        | Subscriptions, payouts, settlement, ledger | ⏳ next |
+| M5a       | Billing core: plans, checkout intents, webhook verification, plan activation, double-entry ledger, manual reconciliation | ✅ |
+| M5b       | Settlement marking, refunds, payout profiles, invoice payment links | ⏳ next |
 | M6        | Super-admin analytics                      | ⏳ |
 | M7        | Marketing, referrals, affiliate commissions| ⏳ |
 | M8        | Security audit, coverage, production prep  | ⏳ |
@@ -30,17 +31,22 @@ with the i18n polish pass in M8 (the app shell itself is fully EN/UR today).
 
 ## Third-party approvals required before enabling money features
 
-- **Safepay** (PK checkout): business account + onboarding/KYC + sandbox keys.
-  Webhook signing secret must be obtained from Safepay and set via
-  `wrangler secret put SAFEPAY_WEBHOOK_SECRET`.
-- **Lemon Squeezy** (SaaS + digital sales): store approval and webhook secret
-  (`LEMON_SQUEEZE_WEBHOOK_SECRET`). Note: Lemon Squeezy charges per-transaction
-  fees — approval from the project owner is required before enabling.
+- **Safepay** (PK checkout): business account + onboarding/KYC + sandbox keys +
+  a payment-link template per plan. Webhook signing secret must be obtained from
+  Safepay and set via `wrangler secret put SAFEPAY_WEBHOOK_SECRET`.
+- **Lemon Squeezy** (SaaS + digital sales): store approval, a payment link per
+  plan and webhook secret (`LEMON_SQUEEZY_WEBHOOK_SECRET`). Note: Lemon Squeezy
+  charges per-transaction fees — approval from the project owner is required
+  before enabling.
 - **RAAST / bank-transfer reconciliation**: implement only against accounts the
-  owner controls; manual reconciliation UI in M5, no credentials stored.
+  owner controls; reconciliation is a super-admin action against the real bank
+  statement, no credentials stored.
 - **Payoneer** (US/B2B invoices): requires Payoneer account + API access approval.
-- No feature above is enabled by default; `assertProviderConfigured` fails
-  closed until secrets are configured by the owner.
+- No feature above is enabled by default; hosted checkout and webhooks fail
+  closed (501/401) until secrets and links are configured by the owner.
+- **Flagged for approval:** server-created hosted checkout via provider APIs
+  (currently owner-configured payment links), automated settlement marking for
+  hosted payouts, automated refunds, and server-side PDF generation.
 
 ## Deliberate safety rails (per development rules)
 

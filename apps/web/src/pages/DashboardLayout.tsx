@@ -6,6 +6,7 @@ const NAV = [
   { to: "/app", labelKey: "nav.dashboard", end: true, icon: "🏠" },
   { to: "/app/apps", labelKey: "nav.apps", icon: "🧩" },
   { to: "/app/workspaces", labelKey: "nav.workspaces", icon: "🏬" },
+  { to: "/app/billing", labelKey: "nav.billing", icon: "💳" },
   { to: "/app/settings", labelKey: "nav.settings", icon: "⚙️" },
 ];
 

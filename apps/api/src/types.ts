@@ -5,9 +5,12 @@ export interface Env {
   DB: D1Database;
   ENVIRONMENT?: string; // "development" | "production"
   // Payment provider webhook secrets. Fine to be absent until the payments
-  // milestone; webhooks for unconfigured providers must fail closed.
+  // milestone; webhooks/checkouts for unconfigured providers fail closed.
   SAFEPAY_WEBHOOK_SECRET?: string;
-  LEMON_SQUEEZE_WEBHOOK_SECRET?: string;
+  LEMON_SQUEEZY_WEBHOOK_SECRET?: string;
+  // Owner-configured payment-link templates (one link per plan, sandbox first).
+  SAFEPAY_CHECKOUT_URL_TEMPLATE?: string;
+  LEMON_SQUEEZY_CHECKOUT_URL_TEMPLATE?: string;
 }
 
 export interface SessionUser {

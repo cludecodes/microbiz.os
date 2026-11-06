@@ -60,6 +60,49 @@ Deny-by-default: features absent from the plan's limits map are refused.
 | GET    | `/api/admin/users`     | Latest 200 users                        |
 | GET    | `/api/admin/workspaces`| Latest 200 workspaces                   |
 | GET    | `/api/admin/audit-logs`| Latest 200 audit events (viewing is itself audited) |
+| GET    | `/api/admin/plans`     | All plans incl. inactive, with active subscriber counts |
+| PATCH  | `/api/admin/plans/:planId` | `{price_minor?, is_active?, is_public?}` — audited; price is config, not revenue |
+| GET    | `/api/admin/payments`  | Latest 200 payments; `?status=` / `?provider=` filters |
+| POST   | `/api/admin/payments/:paymentId/confirm` | Manual receipt reconciliation (bank/Raast/Payoneer only) — see billing |
+| GET    | `/api/admin/subscriptions` | Latest 200 subscriptions with workspace + plan |
+| GET    | `/api/admin/ledger`    | Latest 100 journals + postings + per-account totals; `?workspace_id=` scopes all three |
+
+## Billing & subscriptions (`/api/billing`, M5a)
+
+| Method | Path                                             | Min role | Description |
+| ------ | ------------------------------------------------ | -------- | ----------- |
+| GET    | `/api/billing/plans`                             | public   | Active plans + provider capabilities; `?currency=PKR\|USD` |
+| GET    | `/api/billing/providers`                         | public   | Provider capability list with per-environment `configured` flag |
+| GET    | `/api/billing/workspace/:workspaceId`            | member   | Subscription, workspace-currency plans, payment history, `can_manage_billing` |
+| POST   | `/api/billing/workspace/:workspaceId/checkout`   | owner    | `{plan_id, provider, idempotency_key?}` → 201 `{payment, checkout}` |
+| POST   | `/api/billing/workspace/:workspaceId/downgrade`  | owner    | Immediate switch to Free (no partial refunds) |
+| GET    | `/api/billing/workspace/:workspaceId/payments/:paymentId` | member | Payment status (polling for hosted checkout) |
+
+Billing rules enforced server-side:
+
+- **A browser success page never activates anything.** Hosted providers
+  (Safepay, Lemon Squeezy) confirm only through signature-verified webhooks.
+  Manual providers (bank, Raast, Payoneer) confirm only through the super-admin
+  reconciliation endpoint after checking the real receipt.
+- **Amount + currency + reference are re-checked** against the payment intent;
+  a mismatch returns 409 and the payment stays pending.
+- **Idempotency**: `payments.idempotency_key` makes checkout replay-safe, and
+  `payment_events (provider, event_id)` makes webhook replay-safe.
+- **Plan activation is atomic with confirmation**: the guarded `UPDATE … WHERE
+  status IN ('initiated','awaiting_confirmation')` runs first; replayed events
+  cannot activate twice or double-post the ledger.
+- **Double-entry ledger**: every confirmed receipt posts one balanced journal
+  (`receiptPostings` in `packages/shared/src/billing.ts`). Hosted receipts split
+  `available_balance` (net) and `processing_fees`; bank receipts post straight
+  into `settled_bank`. Refunds and settlements have their own balanced builders.
+- **Settlement is independent of payment status**: hosted receipts start
+  `settlement_status = pending`; reconciled bank receipts are `settled` with
+  `settled_at` set. Marking hosted payouts as settled is M5b.
+- **Currency pinning**: PKR workspaces buy PKR plans only; USD workspaces buy
+  USD plans only. Provider/currency mismatches are 422.
+- **No hosted checkout without configuration**: missing webhook secret or
+  payment-link template → 501 with the exact env var name. There is no fake
+  checkout URL in this codebase.
 
 ## Payment webhooks (provider signature auth; no CSRF, never browser-called)
 
@@ -68,11 +111,18 @@ Deny-by-default: features absent from the plan's limits map are refused.
 | POST   | `/api/webhooks/safepay`      | `X-SFPY-Signature` HMAC-SHA256 hex  |
 | POST   | `/api/webhooks/lemonsqueezy` | `X-Signature` HMAC-SHA256 hex       |
 
-Contract: verify signature → idempotent insert into `payment_events` by
-`(provider, event_id)` → audit → and **only then** may status change. Invalid
-signatures return 401 and are recorded but never trigger payment confirmation.
-Provider-specific confirmation + ledger posting arrive in the payments
-milestone (M5); today the handler refuses to mark anything paid.
+Processing order (fail closed at every step):
+
+1. Missing secret → 501; missing/invalid signature → 401, nothing stored.
+2. Stable provider event id required; `(provider, event_id)` is unique.
+3. Match an **existing** payment by our transfer reference — a webhook can
+   never create a payment or revenue.
+4. Re-check `amount_minor` and `currency` against the intent (409 on mismatch).
+5. Confirm → activate the paid plan → post one balanced ledger journal.
+6. Unmatched/refund/other events are recorded and audited but change nothing.
+
+Payload contracts (including the normalized Safepay sandbox contract) live in
+[`docs/providers.md`](providers.md).
 
 ## WhatsApp CRM & Order Manager (`/api/crm/:workspaceId`, M4)
 
@@ -179,8 +229,9 @@ Financial integrity rules enforced server-side:
   explanation.
 - **Status is audited**: every transition writes an audit entry with from/to.
 - **Manual `paid` = owner attestation** (they received the money outside the
-  platform); automated payment confirmation via signed provider webhooks lands
-  in M5 and will require a verified event before `paid`.
+  platform). Verified provider settlement for invoices (paying an invoice
+  through a hosted checkout) is the next billing step (M5b); subscription
+  payments already require a verified event before activation (see Billing).
 - **PDF export**: the print view (`/app/invoices/:docId/print`) uses the
   browser's print dialog — free, no third-party service. Server-side PDF
   generation is **flagged for approval** before it ships (see roadmap).

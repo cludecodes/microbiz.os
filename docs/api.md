@@ -71,6 +71,36 @@ Deny-by-default: features absent from the plan's limits map are refused.
 | POST   | `/api/admin/payout-profiles/:profileId/approval` | `{approved}` — approve/revoke a payout target |
 | GET    | `/api/admin/subscriptions` | Latest 200 subscriptions with workspace + plan |
 | GET    | `/api/admin/ledger`    | Latest 100 journals + postings + per-account totals; `?workspace_id=` scopes all three |
+| GET    | `/api/admin/analytics` | Verified super-admin analytics; `?days=30&currency=PKR\|USD&workspace_id=` |
+| GET    | `/api/admin/analytics/export?dataset=revenue\|payments&days=30&currency=PKR\|USD&workspace_id=` | Audit-logged CSV export of verified daily revenue or confirmed payments |
+
+### Super-admin analytics (M6)
+
+`GET /api/admin/analytics` returns platform metrics derived only from recorded
+data: balanced ledger journals, provider-verified payments, usage events,
+subscriptions, workspaces, invoices and support tickets.
+
+Query parameters:
+
+- `days` (1–366, default 30) selects the trailing UTC day range for the
+  requested report.
+- `currency` (`PKR` or `USD`; default both currencies).
+- `workspace_id` (optional super-admin drill-down; scopes financial/usage/product
+  sections, not platform-level user/workspace totals).
+
+Important definitions returned with the payload:
+
+- **Net receipts** = verified gross receipts − refunds (refunds are contra-revenue).
+- **Fees** (processing/payout) are separate expenses, not net-revenue deductions.
+- **Contracted monthly value** = plan list price × active subscriptions; this is
+  a plan-level estimate, not collected cash.
+- **Merchant order/invoice totals** are customer activity, not MicroBiz revenue.
+- **Ledger balances** are derived from recorded events and are not a live bank
+  feed.
+
+`GET /api/admin/analytics/export?dataset=revenue` returns daily gross/refund/fee
+totals as CSV. `dataset=payments` returns confirmed/refunded payment rows. Both
+exports are audit-logged and sanitized against spreadsheet formula injection.
 
 ## Billing & subscriptions (`/api/billing`, M5a–M5b)
 

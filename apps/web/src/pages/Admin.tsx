@@ -3,6 +3,7 @@ import { api } from "../lib/apiClient";
 import { useAuth } from "../lib/authContext";
 import { Badge, Button, Card, ErrorText, Input, PageTitle, Table } from "../components/ui";
 import { formatMoney, toMinorUnits, type CurrencyCode } from "@microbiz/shared";
+import { AdminAnalytics } from "./AdminAnalytics";
 
 interface Summary {
   users: number;
@@ -336,6 +337,11 @@ export default function Admin() {
         </p>
       )}
 
+      <AdminAnalytics />
+
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        Operations
+      </h2>
       <div className="grid gap-5 lg:grid-cols-4">
         {summary && (
           <>
@@ -362,7 +368,9 @@ export default function Admin() {
               <p className="text-sm text-slate-600 dark:text-slate-300">
                 {summary.confirmed_receipts.length === 0
                   ? "No confirmed payments yet. This figure counts ONLY provider-verified transactions — never demo data."
-                  : summary.confirmed_receipts.map((r) => `${r.currency}: ${r.total}`).join(" · ")}
+                  : summary.confirmed_receipts
+                      .map((r) => formatMoney(r.total, r.currency as CurrencyCode))
+                      .join(" · ")}
               </p>
             </Card>
           </>

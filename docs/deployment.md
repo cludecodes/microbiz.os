@@ -40,7 +40,7 @@ real credentials in `wrangler.jsonc` or any committed file. Rotating the payout
 key makes existing profiles undecryptable — owners must re-enter them.
 
 ```bash
-# apply the M5b indexes (payout profile uniqueness, invoice payment lookups)
+# apply the M5b/M6 indexes (payout profiles, invoice payments, analytics reads)
 npm run db:migrate:remote
 ```
 
@@ -95,6 +95,9 @@ PWA: `manifest.webmanifest` + `sw.js` are served from `public/` automatically.
   `paid` with a balanced ledger journal.
 - Settlement: mark a hosted payout settled with the real bank amount and verify
   the `payout_fees` shortfall posting.
+- Super-admin analytics: `GET /api/admin/analytics` returns 200 for a super
+  admin and derived, provider-verified financial figures; normal users receive
+  403. CSV export uses verified rows only.
 - Super-admin `/api/admin/ledger` shows balanced journals only; no seeded rows.
 
 ## Rollback

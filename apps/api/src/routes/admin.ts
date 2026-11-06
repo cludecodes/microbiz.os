@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-import { getSessionUser, type ApiContext } from "../lib/auth";
+import { requireSuperAdmin } from "../lib/adminAuth";
 import { jsonError, nowIso, uuid } from "../lib/http";
 import { audit } from "../lib/ops";
 import { confirmPayment, refundPayment, settlePayment, type PaymentRow } from "../lib/billing";
@@ -10,6 +10,7 @@ import {
   payoutDetailsPreview,
 } from "../lib/payouts";
 import type { PayoutProfileKind } from "@microbiz/shared";
+import { adminAnalyticsRoutes } from "./adminAnalytics";
 
 /**
  * Super-admin controls. Every route requires users.is_super_admin = 1,
@@ -17,10 +18,7 @@ import type { PayoutProfileKind } from "@microbiz/shared";
  */
 export const adminRoutes = new Hono<{ Bindings: Env }>();
 
-async function requireSuperAdmin(c: ApiContext) {
-  const u = await getSessionUser(c);
-  return u && u.is_super_admin === 1 ? u : null;
-}
+adminRoutes.route("/analytics", adminAnalyticsRoutes);
 
 adminRoutes.get("/summary", async (c) => {
   const admin = await requireSuperAdmin(c);

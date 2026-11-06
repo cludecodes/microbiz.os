@@ -52,7 +52,10 @@ microbiz-os/
       admin-attested partial/full refunds (settled vs held funds), AES-256-GCM
       encrypted payout profiles with admin approval, and full-total invoice
       payment links that become `paid` only after verified confirmation
-- [ ] **M6** Super-admin analytics deepening
+- [x] **M6** Super-admin analytics: verified daily revenue/refund/fee series,
+      gross/refund/net receipts, fees, bank/settled balances, provider breakdown,
+      plan distribution, top workspaces, module usage, payment statuses and
+      verified CSV exports
 - [ ] **M7** Marketing, referrals, affiliate commissions
 - [ ] **M8** Security hardening, coverage, production prep
 
@@ -79,6 +82,7 @@ npm run test              # all workspaces (vitest + real-workerd integration su
 #   test/invoices.mjs   invoices & quotations
 #   test/billing.mjs    plans, checkout, webhooks, ledger, reconciliation (66 checks)
 #   test/m5b.mjs        settlements, refunds, payout profiles, invoice links (68 checks)
+#   test/m6.mjs         super-admin analytics + verified CSV exports (34 checks)
 ```
 
 ## Principles

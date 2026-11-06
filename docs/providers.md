@@ -210,6 +210,22 @@ into one payable intent for its full total:
 - manually marking an invoice paid (or void) cancels pending intents so a later
   webhook cannot double-count money.
 
+## Super-admin analytics (M6)
+
+`GET /api/admin/analytics` is read-only and super-admin-only. It assembles
+reports from verified data only:
+
+- balanced ledger journals for gross receipts, refunds, processing/payout fees,
+  bank inflow/outflow and derived balances;
+- provider-confirmed payments for gross, refunds, net and per-provider figures;
+- subscriptions/plans for active counts and contracted monthly value;
+- usage events and product documents for module activity.
+
+The response includes explicit definitions for net receipts, fees, contracted
+value and merchant activity so dashboards never present estimates as revenue.
+`GET /api/admin/analytics/export` writes audited CSV exports of the verified
+daily revenue series or confirmed payment rows.
+
 ## Explicit non-goals
 
 - No customer wallets or escrow: the platform never holds customer balances.

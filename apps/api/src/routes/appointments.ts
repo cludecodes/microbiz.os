@@ -1,9 +1,13 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
-// @ts-nocheck
 import { getSessionUser, forbidden, unauthorized, requireWorkspaceAccess } from "../lib/auth";
 import { jsonError, nowIso, uuid } from "../lib/http";
 import { audit } from "../lib/ops";
+
+// All paths below are mounted under /api/appointments/:workspaceId, so the
+// route params are always present on real requests.
+const workspaceIdParam = (c: { req: { param: (k: string) => string | undefined } }) =>
+  c.req.param("workspaceId") as string;
 
 export const appointmentsRoutes = new Hono<{ Bindings: Env }>();
 
@@ -29,7 +33,7 @@ appointmentsRoutes.get("/", async (c) => {
 appointmentsRoutes.post("/", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return unauthorized(c);
-  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  const ctx = await requireWorkspaceAccess(c, workspaceIdParam(c), "owner");
   if (!ctx) return forbidden(c);
   let body: unknown;
   try {
@@ -57,15 +61,14 @@ appointmentsRoutes.post("/", async (c) => {
     `INSERT INTO appointments (id, workspace_id, user_id, title, description, start_at, end_at, status, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`
   )
-    // @ts-ignore
-.bind(
+    .bind(
       id,
       ctx.workspace.id,
       user.id,
-      title as string,
-      description as string,
-      start_at as string,
-      end_at as string,
+      title,
+      description,
+      start_at,
+      end_at,
       ts,
       ts
     )
@@ -87,7 +90,7 @@ appointmentsRoutes.post("/", async (c) => {
 appointmentsRoutes.patch("/:appointmentId", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return unauthorized(c);
-  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "admin");
+  const ctx = await requireWorkspaceAccess(c, workspaceIdParam(c), "admin");
   if (!ctx) return forbidden(c);
   const appointmentId = c.req.param("appointmentId");
   let body: unknown;
@@ -104,8 +107,7 @@ appointmentsRoutes.patch("/:appointmentId", async (c) => {
   const result = await c.env.DB.prepare(
     `UPDATE appointments SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`
   )
-    // @ts-ignore
-.bind(status as string, ts, appointmentId, ctx.workspace.id)
+    .bind(status, ts, appointmentId, ctx.workspace.id)
     .run();
   if ((result.meta?.changes ?? 0) === 0) return jsonError(c, 404, "Appointment not found or not in this workspace");
 
@@ -125,15 +127,14 @@ appointmentsRoutes.patch("/:appointmentId", async (c) => {
 appointmentsRoutes.delete("/:appointmentId", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return unauthorized(c);
-  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  const ctx = await requireWorkspaceAccess(c, workspaceIdParam(c), "owner");
   if (!ctx) return forbidden(c);
   const appointmentId = c.req.param("appointmentId");
   const ts = nowIso();
   await c.env.DB.prepare(
     `DELETE FROM appointments WHERE id = ? AND workspace_id = ?`
   )
-    // @ts-ignore
-.bind(appointmentId as string, ctx.workspace.id as string)
+    .bind(appointmentId, ctx.workspace.id)
     .run();
 
   await audit(c, {

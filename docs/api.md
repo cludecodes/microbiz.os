@@ -102,6 +102,39 @@ Important definitions returned with the payload:
 totals as CSV. `dataset=payments` returns confirmed/refunded payment rows. Both
 exports are audit-logged and sanitized against spreadsheet formula injection.
 
+## Referrals & Affiliate commissions (M7)
+
+| Method | Path                                 | Min role | Description |
+| ------ | ------------------------------------ | -------- | ----------- |
+| GET    | `/api/referrals/me`                  | session  | Returns the authenticated user's created referral codes and conversion stats (`total`, `converted`, `pending`). |
+| POST   | `/api/referrals`                     | session  | Generates a personal `MBC-XXXXXX` style referral code and stores it in the `referrals` table (referred_user_id = NULL). |
+| GET    | `/api/commissions/me`                | session  | Lists the user's commission records with a summary (pending/approved/paid/void counts, earned minor amount). |
+| POST   | `/api/commissions`                     | session  | Creates a commission (status `pending`) linked to a referral, with `basis` (`subscription`/`lead_sale`/`digital_sale`), `basis_id`, `currency`, `amount_minor`. |
+| GET    | `/api/admin/commissions`               | super-admin | List all commissions (optional `?status` filter: `pending|approved|paid|void`). |
+| POST   | `/api/admin/commissions`               | super-admin | Create a commission (same payload as `/api/commissions`). |
+| POST   | `/api/admin/commissions/:id/approval` | super-admin | Transitions a commission from `pending` → `approved`. |
+| POST   | `/api/admin/commissions/:id/pay`      | super-admin | Transitions a commission from `approved` → `paid`, records `paid_at`. |
+| POST   | `/api/admin/commissions/:id/void`     | super-admin | Transitions a commission from `pending` or `approved` → `void`. |
+
+Important notes:
+
+- All commission amounts are integer minor units (paisa/cents).  
+- Commissions are fully audited via the `audit_logs` table; every status change writes an entry with actor, workspace, action, and detail.  
+- Referral codes follow the format `MBC-XXXXXX` (uppercase, 3‑32 characters, `A‑Z` and `0‑9` and hyphen).  
+- A referral code is considered *converted* when a new account registers with it (the `referred_user_id` field is set).  
+- Commissions can only be created, approved, paid, or voided by a super‑admin or the referrer themselves (the API checks ownership).  
+
+Query parameters:
+
+- `?status=pending|approved|paid|void` – filter list endpoints.
+
+Payload details:
+
+- **Create commission** (`POST /api/commissions`): `{ referral_id, basis, basis_id, currency, amount_minor }`.  
+- **Admin create** (`POST /api/admin/commissions`): same payload, additionally validated that the referrer matches the admin’s user id.  
+
+See the code in `apps/api/src/routes/referrals.ts`, `apps/api/src/routes/commissions.ts`, and `apps/api/src/routes/admin.ts` for full implementation.
+
 ## Billing & subscriptions (`/api/billing`, M5a–M5b)
 
 | Method | Path                                             | Min role | Description |

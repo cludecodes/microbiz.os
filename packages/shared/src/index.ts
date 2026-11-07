@@ -7,3 +7,4 @@ export * from "./crm";
 export * from "./qrmenu";
 export * from "./invoices";
 export * from "./billing";
+export * from "./marketing";

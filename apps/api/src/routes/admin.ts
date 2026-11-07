@@ -10,6 +10,7 @@ import {
   payoutDetailsPreview,
 } from "../lib/payouts";
 import type { PayoutProfileKind } from "@microbiz/shared";
+import { createCommissionSchema } from "@microbiz/shared";
 import { adminAnalyticsRoutes } from "./adminAnalytics";
 
 /**
@@ -618,6 +619,154 @@ adminRoutes.get("/ledger", async (c) => {
     totals: totals.results,
     note: "Signed balance = debits - credits for assets; revenue accounts accumulate credits.",
   });
+});
+
+// ---------------------------------------------------------- referral & commissions admin (M7)
+
+adminRoutes.get("/commissions", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const status = c.req.query("status");
+  const rows = await c.env.DB.prepare(
+    `SELECT c.id, c.referral_id, c.referrer_user_id, c.basis, c.basis_id, c.currency,
+            c.amount_minor, c.status, c.created_at, c.paid_at, r.code AS referral_code,
+            r.referred_user_id
+       FROM commissions c
+       JOIN referrals r ON r.id = c.referral_id
+      WHERE (? IS NULL OR c.status = ?)
+      ORDER BY c.created_at DESC
+      LIMIT 200`
+  )
+    .bind(status ?? null, status ?? null)
+    .all();
+  return c.json({ commissions: rows.results });
+});
+
+adminRoutes.post("/commissions", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const parsed = createCommissionSchema.safeParse(body);
+  if (!parsed.success) return jsonError(c, 422, "Invalid commission payload");
+
+  const referral = await c.env.DB.prepare(
+    `SELECT id, referrer_user_id FROM referrals WHERE id = ?`
+  )
+    .bind(parsed.data.referral_id)
+    .first<{ id: string; referrer_user_id: string }>();
+  if (!referral) return jsonError(c, 404, "Referral not found");
+  if (referral.referrer_user_id !== admin.id) return jsonError(c, 403, "Referral belongs to another user");
+
+  const id = uuid();
+  const ts = nowIso();
+  await c.env.DB.prepare(
+    `INSERT INTO commissions (id, referral_id, referrer_user_id, basis, basis_id, currency, amount_minor, status, created_at, paid_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)`
+  )
+    .bind(
+      id,
+      parsed.data.referral_id,
+      referral.referrer_user_id,
+      parsed.data.basis,
+      parsed.data.basis_id,
+      parsed.data.currency,
+      parsed.data.amount_minor,
+      ts
+    )
+    .run();
+
+  await audit(c, {
+    actor_user_id: admin.id,
+    action: "admin.commission_created",
+    target_type: "commission",
+    target_id: id,
+    detail: { referral_id: parsed.data.referral_id, basis: parsed.data.basis, amount_minor: parsed.data.amount_minor },
+  });
+
+  return c.json({ commission: { id } }, 201);
+});
+
+adminRoutes.post("/commissions/:commissionId/approval", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const commissionId = c.req.param("commissionId");
+  const commission = await c.env.DB.prepare(
+    `SELECT id, referrer_user_id, basis, amount_minor, status FROM commissions WHERE id = ?`
+  )
+    .bind(commissionId)
+    .first<{ id: string; referrer_user_id: string; basis: string; amount_minor: number; status: string }>();
+  if (!commission) return jsonError(c, 404, "Commission not found");
+  if (commission.status !== "pending") return jsonError(c, 409, "Only pending commissions can be approved");
+
+  const ts = nowIso();
+  await c.env.DB.prepare(`UPDATE commissions SET status = 'approved' WHERE id = ? AND status = 'pending'`)
+    .bind(commissionId)
+    .run();
+  await audit(c, {
+    actor_user_id: admin.id,
+    action: "admin.commission_approved",
+    target_type: "commission",
+    target_id: commissionId,
+    detail: { basis: commission.basis, amount_minor: commission.amount_minor, from: "pending", to: "approved" },
+  });
+  return c.json({ ok: true, commission_id: commissionId, status: "approved" });
+});
+
+adminRoutes.post("/commissions/:commissionId/pay", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const commissionId = c.req.param("commissionId");
+  const commission = await c.env.DB.prepare(
+    `SELECT id, referrer_user_id, basis, amount_minor, status FROM commissions WHERE id = ?`
+  )
+    .bind(commissionId)
+    .first<{ id: string; referrer_user_id: string; basis: string; amount_minor: number; status: string }>();
+  if (!commission) return jsonError(c, 404, "Commission not found");
+  if (commission.status !== "approved") return jsonError(c, 409, "Only approved commissions can be paid");
+
+  const ts = nowIso();
+  await c.env.DB.prepare(`UPDATE commissions SET status = 'paid', paid_at = ? WHERE id = ? AND status = 'approved'`)
+    .bind(ts, commissionId)
+    .run();
+  await audit(c, {
+    actor_user_id: admin.id,
+    action: "admin.commission_paid",
+    target_type: "commission",
+    target_id: commissionId,
+    detail: { basis: commission.basis, amount_minor: commission.amount_minor, from: "approved", to: "paid" },
+  });
+  return c.json({ ok: true, commission_id: commissionId, status: "paid", paid_at: ts });
+});
+
+adminRoutes.post("/commissions/:commissionId/void", async (c) => {
+  const admin = await requireSuperAdmin(c);
+  if (!admin) return jsonError(c, 403, "Super admin access required");
+  const commissionId = c.req.param("commissionId");
+  const commission = await c.env.DB.prepare(
+    `SELECT id, status FROM commissions WHERE id = ?`
+  )
+    .bind(commissionId)
+    .first<{ id: string; status: string }>();
+  if (!commission) return jsonError(c, 404, "Commission not found");
+  if (commission.status !== "pending" && commission.status !== "approved") return jsonError(c, 409, "Only pending or approved commissions can be voided");
+
+  const ts = nowIso();
+  await c.env.DB.prepare(`UPDATE commissions SET status = 'void' WHERE id = ? AND status IN ('pending', 'approved')`)
+    .bind(commissionId)
+    .run();
+  await audit(c, {
+    actor_user_id: admin.id,
+    action: "admin.commission_voided",
+    target_type: "commission",
+    target_id: commissionId,
+    detail: { from: commission.status, to: "void" },
+  });
+  return c.json({ ok: true, commission_id: commissionId, status: "void" });
 });
 
 export default adminRoutes;

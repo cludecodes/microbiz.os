@@ -5,11 +5,19 @@ import { z } from "zod";
 export const localeSchema = z.enum(["en", "ur"]);
 export const currencySchema = z.enum(["PKR", "USD"]);
 
+/** Referral code format: `MBC-XXXXXX` style, uppercase, 3-32 chars. */
+export const referralCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z0-9][A-Z0-9-]{2,31}$/, "Referral code must be 3-32 characters (A-Z, 0-9, hyphen)");
+
 export const registerSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(254),
   password: z.string().min(10).max(200),
   name: z.string().trim().min(1).max(120),
   locale: localeSchema.default("en"),
+  referral_code: referralCodeSchema.optional(),
 });
 
 export const loginSchema = z.object({

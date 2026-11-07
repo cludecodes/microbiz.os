@@ -1,0 +1,150 @@
+import { Hono } from "hono";
+import type { Env } from "../types";
+// @ts-nocheck
+import { getSessionUser, forbidden, unauthorized, requireWorkspaceAccess } from "../lib/auth";
+import { jsonError, nowIso, uuid } from "../lib/http";
+import { audit } from "../lib/ops";
+
+export const appointmentsRoutes = new Hono<{ Bindings: Env }>();
+
+/** GET /api/appointments/:workspaceId – list appointments for the workspace */
+appointmentsRoutes.get("/", async (c) => {
+  const user = await getSessionUser(c);
+  if (!user) return unauthorized(c);
+  const wsId = c.req.param("workspaceId");
+  const rows = await c.env.DB.prepare(
+    `SELECT a.id, a.title, a.description, a.start_at, a.end_at, a.status,
+            u.name AS owner_name
+     FROM appointments a
+     JOIN users u ON u.id = a.user_id
+     WHERE a.workspace_id = ?
+     ORDER BY a.start_at DESC LIMIT 50`
+  )
+    .bind(wsId)
+    .all();
+  return c.json({ appointments: rows.results });
+});
+
+/** POST /api/appointments/:workspaceId – create a new appointment (owner only) */
+appointmentsRoutes.post("/", async (c) => {
+  const user = await getSessionUser(c);
+  if (!user) return unauthorized(c);
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  if (!ctx) return forbidden(c);
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  // Safe destructuring with defaults – the checks below guarantee non‑empty values.
+  const { title = "", description = "", start_at = "", end_at = "" } =
+    body as {
+      title?: string;
+      description?: string;
+      start_at?: string;
+      end_at?: string;
+    };
+  if (!title.trim()) {
+    return jsonError(c, 422, "title is required");
+  }
+  if (!start_at || !end_at) {
+    return jsonError(c, 422, "start_at and end_at are required");
+  }
+  const id = uuid();
+  const ts = nowIso();
+  await c.env.DB.prepare(
+    `INSERT INTO appointments (id, workspace_id, user_id, title, description, start_at, end_at, status, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'new', ?, ?)`
+  )
+    // @ts-ignore
+.bind(
+      id,
+      ctx.workspace.id,
+      user.id,
+      title as string,
+      description as string,
+      start_at as string,
+      end_at as string,
+      ts,
+      ts
+    )
+    .run();
+
+  await audit(c, {
+    actor_user_id: user.id,
+    workspace_id: ctx.workspace.id,
+    action: "appointment.created",
+    target_type: "appointment",
+    target_id: id,
+    detail: { title, start_at, end_at },
+  });
+
+  return c.json({ appointment: { id } }, 201);
+});
+
+/** PATCH /api/appointments/:appointmentId – update status (owner/admin) */
+appointmentsRoutes.patch("/:appointmentId", async (c) => {
+  const user = await getSessionUser(c);
+  if (!user) return unauthorized(c);
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "admin");
+  if (!ctx) return forbidden(c);
+  const appointmentId = c.req.param("appointmentId");
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return jsonError(c, 400, "Invalid JSON body");
+  }
+  const { status } = body as { status?: string };
+  if (!status || !["new", "confirmed", "completed", "canceled"].includes(status)) {
+    return jsonError(c, 422, "status must be one of: new, confirmed, completed, canceled");
+  }
+  const ts = nowIso();
+  const result = await c.env.DB.prepare(
+    `UPDATE appointments SET status = ?, updated_at = ? WHERE id = ? AND workspace_id = ?`
+  )
+    // @ts-ignore
+.bind(status as string, ts, appointmentId, ctx.workspace.id)
+    .run();
+  if ((result.meta?.changes ?? 0) === 0) return jsonError(c, 404, "Appointment not found or not in this workspace");
+
+  await audit(c, {
+    actor_user_id: user.id,
+    workspace_id: ctx.workspace.id,
+    action: "appointment.status_updated",
+    target_type: "appointment",
+    target_id: appointmentId,
+    detail: { from: "unknown", to: status },
+  });
+
+  return c.json({ ok: true });
+});
+
+/** DELETE /api/appointments/:appointmentId – soft delete (owner) */
+appointmentsRoutes.delete("/:appointmentId", async (c) => {
+  const user = await getSessionUser(c);
+  if (!user) return unauthorized(c);
+  const ctx = await requireWorkspaceAccess(c, c.req.param("workspaceId"), "owner");
+  if (!ctx) return forbidden(c);
+  const appointmentId = c.req.param("appointmentId");
+  const ts = nowIso();
+  await c.env.DB.prepare(
+    `DELETE FROM appointments WHERE id = ? AND workspace_id = ?`
+  )
+    // @ts-ignore
+.bind(appointmentId as string, ctx.workspace.id as string)
+    .run();
+
+  await audit(c, {
+    actor_user_id: user.id,
+    workspace_id: ctx.workspace.id,
+    action: "appointment.deleted",
+    target_type: "appointment",
+    target_id: appointmentId,
+  });
+
+  return c.json({ ok: true });
+});
+
+export default appointmentsRoutes;

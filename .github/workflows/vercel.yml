@@ -1,8 +1,10 @@
 name: Deploy to Vercel
 
+# Production re-deployments run through Vercel's native GitHub integration
+# (push to main). This workflow is the manual/ops path: it builds the SPA in
+# CI and deploys to the linked project using the VERCEL_TOKEN repo secret.
 on:
-  push:
-    branches: [ master ]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -13,9 +15,9 @@ jobs:
         uses: actions/setup-node@v3
         with:
           node-version: '20'
-      - run: cd apps/web && npm ci
+      - run: npm ci
       - run: npm run build -w @microbiz/web
-      - name: Deploy to Vercel
-        run: npx vercel --prod --token $VERCEL_TOKEN
+      - name: Deploy to Vercel (production)
+        run: npx vercel --prod --yes --token="$VERCEL_TOKEN"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}

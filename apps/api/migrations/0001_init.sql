@@ -395,3 +395,9 @@ CREATE TABLE rate_limits (
   window_start INTEGER NOT NULL,
   count        INTEGER NOT NULL
 );
+
+-- ---------------------------------------------------------------- usage limits (Phase 2 feature keys)
+CREATE TABLE usage_limits (
+  feature_key   TEXT PRIMARY KEY,
+  max_per_month INTEGER NOT NULL DEFAULT 0
+);

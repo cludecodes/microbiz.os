@@ -11,6 +11,11 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Vercel link - commit the project link, not local machine files
+.vercel/*
+!.vercel/project.json
+
 .dev.vars
 .dev.vars.*
 !.dev.vars.example

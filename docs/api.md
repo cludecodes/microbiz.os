@@ -324,3 +324,43 @@ Financial integrity rules enforced server-side:
 - **PDF export**: the print view (`/app/invoices/:docId/print`) uses the
   browser's print dialog — free, no third-party service. Server-side PDF
   generation is **flagged for approval** before it ships (see roadmap).
+
+## Appointment Booking (`/api/appointments/:workspaceId`, Phase 2)
+
+| Method | Path                                                | Min role | Description                                                     |
+| ------ | --------------------------------------------------- | -------- | --------------------------------------------------------------- |
+| GET    | `/api/appointments/:workspaceId`                    | member   | Latest 50 appointments with owner name, newest first            |
+| POST   | `/api/appointments/:workspaceId`                    | member   | `{title, description?, start_at, end_at}` (ISO) → 201 `{appointment:{id}}` |
+| PATCH  | `/api/appointments/:workspaceId/:appointmentId`     | admin    | `{status}` in `new|confirmed|completed|canceled` — audited       |
+| DELETE | `/api/appointments/:workspaceId/:appointmentId`     | owner    | Removes the row (keep-client data lives elsewhere)               |
+
+Behavior:
+
+- `end_at` must parse and be after `start_at` (422 otherwise).
+- Creating an appointment consumes one `appointments.monthly` unit
+  (Free: 0 — upgrade required; Starter: 5; Pro: unlimited) → 403 past the limit.
+  Usage is ledger-style: deleting an appointment never returns the metered unit.
+- Status transitions are audited with actor + target.
+
+## CV Generator (client-side, Phase 2)
+
+The builder runs entirely in the browser (no CV API): structured editor →
+live A4 preview → `window.print()` "Save as PDF". Drafts autosave to
+`localStorage`. One of three templates (minimal / professional / creative) is
+applied to the preview. Server-side CV storage and metered generation are
+flagged for a later iteration; until then nothing user-authored leaves the
+device.
+
+## PDF Utilities (`/api/pdftools/:workspaceId`, Phase 2)
+
+The heavy lifting (merge / extract pages / re-save with object streams) runs
+**client-side with pdf-lib** — files never leave the browser. This endpoint
+records and meters the completed operations so plan limits stay enforced:
+
+| Method | Path                                  | Min role | Description                                                        |
+| ------ | ------------------------------------- | -------- | ------------------------------------------------------------------ |
+| GET    | `/api/pdftools/:workspaceId`          | member   | Last 50 operations (`kind`, `input_files`, `output_file`, times)   |
+| POST   | `/api/pdftools/:workspaceId`          | member   | `{kind: merge|split|compress, input_names[1..20], output_name, output_bytes?}` → 201 |
+
+Each recorded operation consumes one `pdf-tools.monthly` unit
+(Free: 2/month; Starter: 10; Pro: unlimited) → 403 past the limit.

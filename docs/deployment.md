@@ -79,6 +79,31 @@ PWA: `manifest.webmanifest` + `sw.js` are served from `public/` automatically.
 6. Only then switch the provider dashboard to live mode. See
    [docs/providers.md](providers.md) for payload contracts and the ledger rules.
 
+## 6b. Live deployment topology (verified)
+
+The current production setup:
+
+- **Frontend**: Vercel project `microbiz.os` → `https://microbizos.vercel.app`
+  (production branch `main`; GitHub auto-deploy and the
+  `.github/workflows/vercel.yml` manual dispatch both deploy it).
+- **API**: Cloudflare Worker `microbiz-api` at
+  `https://microbiz-api.microbiz-os-cludecodes.workers.dev`, D1 database
+  `microbiz` (APAC).
+- **Join**: `vercel.json` forwards `/api/:path*` to the Worker **before** the
+  SPA fallback rewrite. The API stays same-origin, so `SameSite=Lax` cookies
+  and the CSRF double-submit keep working with no CORS configuration.
+- Every API change needs `npm run deploy` (worker) + D1 migrations; Vercel
+  deploys only the SPA.
+
+Post-change verification (run against `https://microbizos.vercel.app`):
+
+```bash
+# 1. JSON not HTML from the API (proof the rewrite works)
+curl -s https://microbizos.vercel.app/api/health
+# 2. CSRF + register/login round-trip with cookies (same session)
+# 3. An unknown /api path must return {"error":"Not found"} from the Worker
+```
+
 ## 7. Post-deploy checks
 
 - `GET /api/health` → 200

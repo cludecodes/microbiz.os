@@ -3,6 +3,10 @@ import type { Env } from "../types";
 import { getSessionUser, forbidden, unauthorized, requireWorkspaceAccess } from "../lib/auth";
 import { jsonError, nowIso, uuid } from "../lib/http";
 import { audit } from "../lib/ops";
+import { currentUsage, decideFeature, loadWorkspaceEntitlements, recordUsage } from "../lib/entitlements";
+
+const METER_FEATURE = "appointments.monthly";
+const APP_ID = "appointments";
 
 // All paths below are mounted under /api/appointments/:workspaceId, so the
 // route params are always present on real requests.
@@ -15,7 +19,9 @@ export const appointmentsRoutes = new Hono<{ Bindings: Env }>();
 appointmentsRoutes.get("/", async (c) => {
   const user = await getSessionUser(c);
   if (!user) return unauthorized(c);
-  const wsId = c.req.param("workspaceId");
+  const wsId = workspaceIdParam(c);
+  const ctx = await requireWorkspaceAccess(c, wsId, "member");
+  if (!ctx) return forbidden(c);
   const rows = await c.env.DB.prepare(
     `SELECT a.id, a.title, a.description, a.start_at, a.end_at, a.status,
             u.name AS owner_name
@@ -55,6 +61,29 @@ appointmentsRoutes.post("/", async (c) => {
   if (!start_at || !end_at) {
     return jsonError(c, 422, "start_at and end_at are required");
   }
+  if (Number.isNaN(Date.parse(start_at)) || Number.isNaN(Date.parse(end_at))) {
+    return jsonError(c, 422, "start_at and end_at must be valid ISO date-times");
+  }
+  if (Date.parse(end_at) <= Date.parse(start_at)) {
+    return jsonError(c, 422, "end_at must be after start_at");
+  }
+
+  // Deny-by-default metered entitlement: appointments per month vs plan limit.
+  const ents = await loadWorkspaceEntitlements(c.env, ctx.workspace.id);
+  const monthStart = `${nowIso().slice(0, 7)}-01T00:00:00Z`;
+  const used = await currentUsage(c.env, ctx.workspace.id, METER_FEATURE, monthStart);
+  const decision = decideFeature(ents, METER_FEATURE, used);
+  if (!decision.allowed) {
+    return jsonError(
+      c,
+      403,
+      "Plan limit reached for appointments",
+      decision.reason === "limit_reached"
+        ? `Used ${used} of your plan's monthly appointment allowance. Upgrade or wait for the next billing month.`
+        : decision.reason
+    );
+  }
+
   const id = uuid();
   const ts = nowIso();
   await c.env.DB.prepare(
@@ -73,6 +102,8 @@ appointmentsRoutes.post("/", async (c) => {
       ts
     )
     .run();
+
+  await recordUsage(c.env, ctx.workspace.id, APP_ID, METER_FEATURE, 1, { appointment_id: id });
 
   await audit(c, {
     actor_user_id: user.id,

@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "microbiz",
-      "database_id": "local-dev-placeholder",
+      "database_id": "3f1bc470-de5c-474b-bd39-ec228f952bb8",
       "migrations_dir": "migrations"
     }
   ]

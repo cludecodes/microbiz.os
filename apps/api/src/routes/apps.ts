@@ -16,6 +16,9 @@ const FEATURE_BY_APP: Record<string, string> = {
   "whatsapp-crm": "orders",
   "qr-menu": "scans",
   invoices: "monthly",
+  appointments: "monthly",
+  "cv-generator": "monthly",
+  "pdf-tools": "monthly",
 };
 
 export const appRoutes = new Hono<{ Bindings: Env }>();

@@ -17,6 +17,9 @@ import PublicMenu from "./pages/PublicMenu";
 import Settings from "./pages/Settings";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
+import Appointments from "./pages/Appointments";
+import CvGenerator from "./pages/CvGenerator";
+import PdfTools from "./pages/PdfTools";
 import { useAuth } from "./lib/authContext";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -30,7 +33,6 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     );
   }
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
-  // Failed-logout safety: never render protected content for logged-out users.
   return workspaces.length >= 0 ? children : <Navigate to="/login" replace />;
 }
 
@@ -59,6 +61,9 @@ export default function App() {
         <Route path="apps/whatsapp-crm" element={<CRM />} />
         <Route path="apps/qr-menu" element={<QRMenu />} />
         <Route path="apps/invoices" element={<Invoices />} />
+        <Route path="apps/appointments" element={<Appointments />} />
+        <Route path="apps/cv-generator" element={<CvGenerator />} />
+        <Route path="apps/pdf-tools" element={<PdfTools />} />
         {/* Printable document view — browser print dialog is the free PDF path. */}
         <Route path="invoices/:documentId/print" element={<InvoicePrint />} />
         <Route path="apps/:appId" element={<AppModule />} />

@@ -9,3 +9,4 @@ export * from "./invoices";
 export * from "./billing";
 export * from "./marketing";
 export * from "./digital";
+export * from "./leads";

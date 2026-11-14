@@ -214,6 +214,36 @@ Delivery rules (safety rails):
   if any. Pending = no money claim; a super-admin must still approve and pay it.
   The mint is idempotent per purchase (webhook replays cannot double-mint).
 
+## Lead Marketplace (`/api/leadmarket/:workspaceId`, Phase 3)
+
+Enabled by migration `0008_lead_marketplace.sql` (app `lead-marketplace` + metered
+`lead-marketplace.monthly` listing allowance: Free 2 / Starter 10 / Pro unlimited).
+
+Sellers list their OWN leads; only leads with `status = 'qualified'` and
+`consent_marketing = 1` can be listed, and a lead has at most one active listing.
+
+| Method | Path | Min role | Description |
+| ------ | ---- | -------- | ----------- |
+| GET    | `/api/leadmarket/:workspaceId/listings` | member | Browse all ACTIVE listings across workspaces — masked: seller workspace name, qualification score, price. **Never includes contact details.** |
+| GET    | `/api/leadmarket/:workspaceId/my-leads` | member | The workspace's own `qualified` + consented leads (with an `listed` flag). |
+| POST   | `/api/leadmarket/:workspaceId/listings` | member | List a lead `{lead_id, price_minor, currency}` → 201. Metered via `lead-marketplace.monthly`; duplicate active listing → 409. |
+| DELETE | `/api/leadmarket/:workspaceId/listings/:listingId` | member | Remove an own listing (409 when sold or when a purchase is awaiting payment). |
+| GET    | `/api/leadmarket/:workspaceId/purchases` | member | Buyer-side purchases. Contact fields are NULL until the purchase is `delivered`. |
+| POST   | `/api/leadmarket/:workspaceId/purchases` | member | Buy a listing `{listing_id, provider}` → 201 `{purchase, payment, checkout}`. Own listing → 409; one live purchase per listing (409); provider must settle the listing currency (422); hosted secrets required (501). |
+
+Delivery rules (safety rails):
+
+- Delivery happens ONLY through the single authoritative confirm path
+  (`confirmPayment` in `lib/billing.ts`): on confirmation the lead is copied into
+  the buyer's workspace as a new `leads` row (`source = 'marketplace'`,
+  `status = 'qualified'`, consent preserved), the listing is marked `sold`, and the
+  purchase becomes `delivered`. Nothing else may release contact details.
+- A confirmed lead purchase automatically mints a PENDING affiliate commission
+  (M7, `basis: lead_sale`, 10% of the receipt) for the referrer of the SELLER's
+  workspace owner, if any. Idempotent per purchase.
+- The buyer's workspace holds the payment (the buyer pays); the seller earns
+  from the sale — commissions accrue to the seller side.
+
 ## Payment webhooks (provider signature auth; no CSRF, never browser-called)
 
 | Method | Path                         | Auth                                |

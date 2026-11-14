@@ -20,6 +20,11 @@
 Note: the M4a CRM module UI is English-first; its Urdu strings are batched
 with the i18n polish pass in M8 (the app shell itself is fully EN/UR today).
 
+Note: every application in the registry is now enabled — Phase 1 (whatsapp-crm,
+qr-menu, invoices), Phase 2 (appointments, cv-generator, pdf-tools,
+digital-downloads) and Phase 3 (referrals, lead-marketplace). Only M8
+(security audit, coverage, production prep) remains.
+
 ## Zero-cash budget notes (flagged as required by the brief)
 
 | Thing | Free-tier status |

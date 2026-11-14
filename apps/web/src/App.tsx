@@ -22,6 +22,7 @@ import CvGenerator from "./pages/CvGenerator";
 import PdfTools from "./pages/PdfTools";
 import Referrals from "./pages/Referrals";
 import DigitalDownloads from "./pages/DigitalDownloads";
+import LeadMarketplace from "./pages/LeadMarketplace";
 import Delivery from "./pages/Delivery";
 import { useAuth } from "./lib/authContext";
 
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="apps/cv-generator" element={<CvGenerator />} />
         <Route path="apps/pdf-tools" element={<PdfTools />} />
         <Route path="apps/digital-downloads" element={<DigitalDownloads />} />
+        <Route path="apps/lead-marketplace" element={<LeadMarketplace />} />
         {/* M7 — user-level referrals & commissions (no workspace context). */}
         <Route path="apps/referrals" element={<Referrals />} />
         {/* Printable document view — browser print dialog is the free PDF path. */}

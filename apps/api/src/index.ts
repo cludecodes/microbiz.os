@@ -18,6 +18,7 @@ import { billingRoutes } from "./routes/billing";
 import { referralRoutes } from "./routes/referrals";
 import { commissionRoutes } from "./routes/commissions";
 import { digitalRoutes, digitalPublicRoutes } from "./routes/digital";
+import { leadMarketRoutes } from "./routes/leadmarket";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -95,6 +96,7 @@ app.route("/api/qrmenu", qrMenuRoutes); // /api/qrmenu/:workspaceId/* — Phase 
 app.route("/api/invoices", invoiceRoutes); // /api/invoices/:workspaceId/* — Phase 1 invoices & quotations
 app.route("/api/billing", billingRoutes); // /api/billing/* — plans, subscriptions, checkout, payment status
 app.route("/api/digital/:workspaceId", digitalRoutes); // /api/digital/:workspaceId/* — Phase 2 digital product sales
+app.route("/api/leadmarket/:workspaceId", leadMarketRoutes); // /api/leadmarket/:workspaceId/* — Phase 3 lead marketplace
 app.route("/api/referrals", referralRoutes); // /api/referrals/* — M7 referral codes & conversions
 app.route("/api/commissions", commissionRoutes); // /api/commissions/* — M7 affiliate commissions ledger
 app.route("/api/appointments/:workspaceId", appointmentsRoutes); // /api/appointments/:workspaceId/* — Phase 2 appointment booking

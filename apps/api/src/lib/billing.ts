@@ -9,6 +9,7 @@ export interface PaymentRow {
   plan_id: string | null;
   invoice_id: string | null;
   purchase_id: string | null;
+  lead_purchase_id: string | null;
   provider: string;
   provider_txn_ref: string | null;
   amount_minor: number;
@@ -25,7 +26,7 @@ export async function getPaymentForWorkspace(
   paymentId: string
 ): Promise<PaymentRow | null> {
   return env.DB.prepare(
-    `SELECT id, workspace_id, plan_id, invoice_id, purchase_id, provider, provider_txn_ref, amount_minor, fee_minor,
+    `SELECT id, workspace_id, plan_id, invoice_id, purchase_id, lead_purchase_id, provider, provider_txn_ref, amount_minor, fee_minor,
             currency, status, settlement_status, refund_minor
      FROM payments WHERE id = ? AND workspace_id = ?`
   )
@@ -53,7 +54,9 @@ export type ConfirmResult =
       invoicePaid: boolean;
       /** True when this receipt delivered a linked digital purchase. */
       purchaseDelivered: boolean;
-      /** Pending affiliate commission (M7) minted for a confirmed digital sale. */
+      /** True when this receipt delivered a purchased lead to the buyer. */
+      leadDelivered: boolean;
+      /** Pending affiliate commission (M7) minted for a confirmed sale. */
       commissionId: string | null;
     }
   | { ok: false; reason: string };
@@ -104,6 +107,7 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
         planActivated: null,
         invoicePaid: false,
         purchaseDelivered: false,
+        leadDelivered: false,
         commissionId: null,
       };
     }
@@ -145,6 +149,7 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
   // Digital Downloads (Phase 2): a confirmed receipt delivers the linked
   // purchase automatically. No other code path may release the file.
   let purchaseDelivered = false;
+  let leadDelivered = false;
   let commissionId: string | null = null;
   if (payment.purchase_id) {
     const delivered = await env.DB.prepare(
@@ -158,9 +163,10 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
       .run();
     purchaseDelivered = (delivered.meta?.changes ?? 0) > 0;
     if (purchaseDelivered) {
-      commissionId = await createDigitalSaleCommission(
+      commissionId = await createSaleCommission(
         env,
         payment.workspace_id,
+        "digital_sale",
         payment.purchase_id,
         payment.currency,
         payment.amount_minor
@@ -168,27 +174,58 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
     }
   }
 
-  return { ok: true, alreadyConfirmed: false, journalId, planActivated, invoicePaid, purchaseDelivered, commissionId };
+  // Lead Marketplace (Phase 3): a confirmed receipt delivers the purchased
+  // lead into the buyer's workspace (a new row in their `leads` table). The
+  // seller earns the money, so the affiliate commission accrues to the
+  // SELLER's workspace owner's referrer.
+  if (payment.lead_purchase_id) {
+    const sellerWorkspaceId = await deliverLeadPurchase(env, payment.lead_purchase_id, payment.id, ts);
+    if (sellerWorkspaceId) {
+      leadDelivered = true;
+      if (!commissionId) {
+        commissionId = await createSaleCommission(
+          env,
+          sellerWorkspaceId,
+          "lead_sale",
+          payment.lead_purchase_id,
+          payment.currency,
+          payment.amount_minor
+        );
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    alreadyConfirmed: false,
+    journalId,
+    planActivated,
+    invoicePaid,
+    purchaseDelivered,
+    leadDelivered,
+    commissionId,
+  };
 }
 
 /**
- * M7 affiliate commission for a confirmed digital sale: when the purchasing
- * workspace's owner registered through a referral code, a PENDING commission
- * (10% of the receipt) is recorded for the referrer. Pending means no money
- * claim — a super-admin must still approve and pay it. Idempotent per
- * purchase: the basis_id lookup makes webhook replays harmless.
+ * M7 affiliate commission for a confirmed sale (digital or lead): when the
+ * purchasing workspace's owner registered through a referral code, a PENDING
+ * commission (10% of the receipt) is recorded for the referrer. Pending means
+ * no money claim — a super-admin must still approve and pay it. Idempotent
+ * per (basis, basis_id): webhook replays are harmless.
  */
-async function createDigitalSaleCommission(
+async function createSaleCommission(
   env: Env,
   workspaceId: string,
-  purchaseId: string,
+  basis: "digital_sale" | "lead_sale",
+  basisId: string,
   currency: CurrencyCode,
   amountMinor: number
 ): Promise<string | null> {
   const existing = await env.DB.prepare(
-    `SELECT id FROM commissions WHERE basis = 'digital_sale' AND basis_id = ? LIMIT 1`
+    `SELECT id FROM commissions WHERE basis = ? AND basis_id = ? LIMIT 1`
   )
-    .bind(purchaseId)
+    .bind(basis, basisId)
     .first<{ id: string }>();
   if (existing) return null;
 
@@ -209,11 +246,79 @@ async function createDigitalSaleCommission(
   const id = uuid();
   await env.DB.prepare(
     `INSERT INTO commissions (id, referral_id, referrer_user_id, basis, basis_id, currency, amount_minor, status, created_at, paid_at)
-     VALUES (?, ?, ?, 'digital_sale', ?, ?, ?, 'pending', ?, NULL)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, NULL)`
   )
-    .bind(id, referral.id, referral.referrer_user_id, purchaseId, currency, amount, nowIso())
+    .bind(id, referral.id, referral.referrer_user_id, basis, basisId, currency, amount, nowIso())
     .run();
   return id;
+}
+
+/**
+ * Lead Marketplace delivery: mark the purchase delivered, mark the listing
+ * sold, and copy the seller's lead (contact details) into the buyer's
+ * workspace as a new `leads` row. Runs only inside the authoritative confirm
+ * path and is guarded by `payment_id = ?` + `status = 'awaiting_payment'`.
+ * Returns the SELLER's workspace id (for the affiliate commission), or null
+ * when nothing was delivered.
+ */
+async function deliverLeadPurchase(
+  env: Env,
+  leadPurchaseId: string,
+  paymentId: string,
+  ts: string
+): Promise<string | null> {
+  const row = await env.DB.prepare(
+    `SELECT lp.id, lp.workspace_id AS buyer_workspace_id,
+            ll.workspace_id AS seller_workspace_id,
+            l.contact_name, l.contact_email, l.contact_phone,
+            l.qualification_score, l.consent_marketing, l.consent_at, l.notes
+       FROM lead_purchases lp
+       JOIN lead_listings ll ON ll.id = lp.listing_id
+       JOIN leads l ON l.id = ll.lead_id
+      WHERE lp.id = ? AND lp.payment_id = ? AND lp.status = 'awaiting_payment'`
+  )
+    .bind(leadPurchaseId, paymentId)
+    .first<{
+      id: string;
+      buyer_workspace_id: string;
+      seller_workspace_id: string;
+      contact_name: string;
+      contact_email: string | null;
+      contact_phone: string | null;
+      qualification_score: number;
+      consent_marketing: number;
+      consent_at: string | null;
+      notes: string;
+    }>();
+  if (!row) return null;
+
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE lead_purchases
+          SET status = 'delivered', paid_at = COALESCE(paid_at, ?), delivered_at = ?
+        WHERE id = ? AND payment_id = ? AND status = 'awaiting_payment'`
+    ).bind(ts, ts, row.id, paymentId),
+    env.DB.prepare(
+      `UPDATE lead_listings SET status = 'sold', sold_at = COALESCE(sold_at, ?) WHERE status = 'active' AND id = (SELECT listing_id FROM lead_purchases WHERE id = ?)`
+    ).bind(ts, row.id),
+    env.DB.prepare(
+      `INSERT INTO leads (id, workspace_id, source, contact_name, contact_email, contact_phone,
+                          qualification_score, status, consent_marketing, consent_at, notes, created_at)
+       VALUES (?, ?, 'marketplace', ?, ?, ?, ?, 'qualified', ?, ?, ?, ?)`
+    ).bind(
+      uuid(),
+      row.buyer_workspace_id,
+      row.contact_name,
+      row.contact_email,
+      row.contact_phone,
+      row.qualification_score,
+      row.consent_marketing,
+      row.consent_at,
+      `Purchased via lead marketplace (seller workspace ${row.seller_workspace_id}). ${row.notes}`.trim(),
+      ts
+    ),
+  ]);
+  return row.seller_workspace_id;
 }
 
 /**

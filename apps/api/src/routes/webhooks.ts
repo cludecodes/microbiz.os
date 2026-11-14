@@ -62,7 +62,7 @@ async function handleWebhook(
   let payment: PaymentRow | null = null;
   if (event.reference) {
     payment = await c.env.DB.prepare(
-      `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
+      `SELECT id, workspace_id, plan_id, invoice_id, purchase_id, provider, provider_txn_ref, amount_minor, fee_minor,
               currency, status, settlement_status, refund_minor
        FROM payments WHERE provider = ? AND provider_txn_ref = ?`
     )
@@ -176,6 +176,8 @@ async function handleWebhook(
       already_confirmed: result.alreadyConfirmed,
       plan_activated: result.planActivated,
       invoice_paid: result.invoicePaid,
+      purchase_delivered: result.purchaseDelivered,
+      commission_id: result.commissionId,
       journal_id: result.journalId,
     },
   });
@@ -187,6 +189,8 @@ async function handleWebhook(
     already_confirmed: result.alreadyConfirmed,
     plan_activated: result.planActivated,
     invoice_paid: result.invoicePaid,
+    purchase_delivered: result.purchaseDelivered,
+    commission_id: result.commissionId,
     journal_id: result.journalId,
   });
 }

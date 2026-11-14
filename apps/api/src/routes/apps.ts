@@ -19,6 +19,7 @@ const FEATURE_BY_APP: Record<string, string> = {
   appointments: "monthly",
   "cv-generator": "monthly",
   "pdf-tools": "monthly",
+  "digital-downloads": "monthly",
   referrals: "general",
 };
 

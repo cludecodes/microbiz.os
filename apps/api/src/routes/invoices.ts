@@ -292,7 +292,7 @@ invoiceRoutes.post("/:workspaceId/:documentId/payment-link", async (c) => {
   // A pending link is the idempotent answer: sharing the same link twice must
   // never create a second payable intent.
   const pending = await c.env.DB.prepare(
-    `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
+    `SELECT id, workspace_id, plan_id, invoice_id, purchase_id, provider, provider_txn_ref, amount_minor, fee_minor,
             currency, status, settlement_status, refund_minor
      FROM payments WHERE invoice_id = ? AND status IN ('initiated','awaiting_confirmation')
      ORDER BY created_at DESC LIMIT 1`

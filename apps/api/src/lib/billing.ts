@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { addBillingMonth, receiptPostings, refundPostings, settlementPostings, type CurrencyCode } from "@microbiz/shared";
-import { nowIso } from "./http";
+import { nowIso, uuid } from "./http";
 import { postJournal } from "./ledger";
 
 export interface PaymentRow {
@@ -8,6 +8,7 @@ export interface PaymentRow {
   workspace_id: string;
   plan_id: string | null;
   invoice_id: string | null;
+  purchase_id: string | null;
   provider: string;
   provider_txn_ref: string | null;
   amount_minor: number;
@@ -24,7 +25,7 @@ export async function getPaymentForWorkspace(
   paymentId: string
 ): Promise<PaymentRow | null> {
   return env.DB.prepare(
-    `SELECT id, workspace_id, plan_id, invoice_id, provider, provider_txn_ref, amount_minor, fee_minor,
+    `SELECT id, workspace_id, plan_id, invoice_id, purchase_id, provider, provider_txn_ref, amount_minor, fee_minor,
             currency, status, settlement_status, refund_minor
      FROM payments WHERE id = ? AND workspace_id = ?`
   )
@@ -50,6 +51,10 @@ export type ConfirmResult =
       planActivated: string | null;
       /** True when this receipt covered the linked invoice's full total. */
       invoicePaid: boolean;
+      /** True when this receipt delivered a linked digital purchase. */
+      purchaseDelivered: boolean;
+      /** Pending affiliate commission (M7) minted for a confirmed digital sale. */
+      commissionId: string | null;
     }
   | { ok: false; reason: string };
 
@@ -92,7 +97,15 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
       .bind(payment.id)
       .first<{ status: string }>();
     if (current?.status === "confirmed" || current?.status === "refunded") {
-      return { ok: true, alreadyConfirmed: true, journalId: null, planActivated: null, invoicePaid: false };
+      return {
+        ok: true,
+        alreadyConfirmed: true,
+        journalId: null,
+        planActivated: null,
+        invoicePaid: false,
+        purchaseDelivered: false,
+        commissionId: null,
+      };
     }
     return { ok: false, reason: `payment_status_${current?.status ?? "missing"}` };
   }
@@ -129,7 +142,78 @@ export async function confirmPayment(env: Env, input: ConfirmInput): Promise<Con
     ? await markInvoicePaidIfCovered(env, payment.invoice_id, payment.workspace_id, payment.currency, ts)
     : false;
 
-  return { ok: true, alreadyConfirmed: false, journalId, planActivated, invoicePaid };
+  // Digital Downloads (Phase 2): a confirmed receipt delivers the linked
+  // purchase automatically. No other code path may release the file.
+  let purchaseDelivered = false;
+  let commissionId: string | null = null;
+  if (payment.purchase_id) {
+    const delivered = await env.DB.prepare(
+      `UPDATE digital_purchases
+          SET status = 'delivered',
+              paid_at = COALESCE(paid_at, ?),
+              delivered_at = COALESCE(delivered_at, ?)
+        WHERE id = ? AND payment_id = ? AND status = 'awaiting_payment'`
+    )
+      .bind(ts, ts, payment.purchase_id, payment.id)
+      .run();
+    purchaseDelivered = (delivered.meta?.changes ?? 0) > 0;
+    if (purchaseDelivered) {
+      commissionId = await createDigitalSaleCommission(
+        env,
+        payment.workspace_id,
+        payment.purchase_id,
+        payment.currency,
+        payment.amount_minor
+      );
+    }
+  }
+
+  return { ok: true, alreadyConfirmed: false, journalId, planActivated, invoicePaid, purchaseDelivered, commissionId };
+}
+
+/**
+ * M7 affiliate commission for a confirmed digital sale: when the purchasing
+ * workspace's owner registered through a referral code, a PENDING commission
+ * (10% of the receipt) is recorded for the referrer. Pending means no money
+ * claim — a super-admin must still approve and pay it. Idempotent per
+ * purchase: the basis_id lookup makes webhook replays harmless.
+ */
+async function createDigitalSaleCommission(
+  env: Env,
+  workspaceId: string,
+  purchaseId: string,
+  currency: CurrencyCode,
+  amountMinor: number
+): Promise<string | null> {
+  const existing = await env.DB.prepare(
+    `SELECT id FROM commissions WHERE basis = 'digital_sale' AND basis_id = ? LIMIT 1`
+  )
+    .bind(purchaseId)
+    .first<{ id: string }>();
+  if (existing) return null;
+
+  const referral = await env.DB.prepare(
+    `SELECT r.id, r.referrer_user_id
+       FROM referrals r
+       JOIN memberships m ON m.user_id = r.referred_user_id AND m.role = 'owner'
+      WHERE m.workspace_id = ?
+      LIMIT 1`
+  )
+    .bind(workspaceId)
+    .first<{ id: string; referrer_user_id: string }>();
+  if (!referral) return null;
+
+  const amount = Math.floor(amountMinor * 0.1); // 10% affiliate rate
+  if (amount <= 0) return null;
+
+  const id = uuid();
+  await env.DB.prepare(
+    `INSERT INTO commissions (id, referral_id, referrer_user_id, basis, basis_id, currency, amount_minor, status, created_at, paid_at)
+     VALUES (?, ?, ?, 'digital_sale', ?, ?, ?, 'pending', ?, NULL)`
+  )
+    .bind(id, referral.id, referral.referrer_user_id, purchaseId, currency, amount, nowIso())
+    .run();
+  return id;
 }
 
 /**

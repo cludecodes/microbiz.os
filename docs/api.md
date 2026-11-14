@@ -187,6 +187,33 @@ Billing rules enforced server-side:
   payment-link template → 501 with the exact env var name. There is no fake
   checkout URL in this codebase.
 
+## Digital Downloads (`/api/digital/:workspaceId`, Phase 2)
+
+Enabled by migration `0007_digital_downloads.sql` (app `digital-downloads` + metered
+`digital-downloads.monthly` product-publishing allowance: Free 2 / Starter 10 / Pro unlimited).
+
+| Method | Path | Min role | Description |
+| ------ | ---- | -------- | ----------- |
+| GET    | `/api/digital/:workspaceId` | member | List the workspace's digital products (including archived). |
+| POST   | `/api/digital/:workspaceId` | member | Create a product `{name, description?, price_minor, currency, file_url, delivery_note?}` → 201, metered via `digital-downloads.monthly`. |
+| PATCH  | `/api/digital/:workspaceId/:productId` | member | Partial update `{name?, description?, price_minor?, currency?, file_url?, delivery_note?, active?}`. |
+| DELETE | `/api/digital/:workspaceId/:productId` | member | Soft-archive a product (purchases keep referencing it). |
+| GET    | `/api/digital/:workspaceId/purchases` | member | Purchases joined with product name and payment status. |
+| POST   | `/api/digital/:workspaceId/purchases` | member | Record a sale `{product_id, buyer_email, provider}` → 201 `{purchase, payment, checkout}`. Creates an `awaiting_confirmation` payment linked to the purchase; the provider must be able to settle the product's currency (422 otherwise), hosted providers need configured secrets (501 otherwise). |
+| GET    | `/api/public/digital/:workspaceId/:purchaseId?token=` | public (token) | Buyer delivery endpoint. Before confirmation: 403. After: `{product: {name, description, file_url, delivery_note}}`. Wrong/missing token: 404. |
+
+Delivery rules (safety rails):
+
+- The file URL is stored on the product but only ever released through the token-gated
+  delivery endpoint, and only after the linked payment reaches `confirmed`.
+- Delivery happens through the single authoritative confirm path (`confirmPayment` in
+  `lib/billing.ts`) — provider webhook or super-admin reconciliation. Nothing else may
+  mark a purchase delivered.
+- A confirmed digital sale automatically mints a PENDING affiliate commission (M7,
+  `basis: digital_sale`, 10% of the receipt) for the referrer of the workspace owner,
+  if any. Pending = no money claim; a super-admin must still approve and pay it.
+  The mint is idempotent per purchase (webhook replays cannot double-mint).
+
 ## Payment webhooks (provider signature auth; no CSRF, never browser-called)
 
 | Method | Path                         | Auth                                |

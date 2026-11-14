@@ -21,6 +21,8 @@ import Appointments from "./pages/Appointments";
 import CvGenerator from "./pages/CvGenerator";
 import PdfTools from "./pages/PdfTools";
 import Referrals from "./pages/Referrals";
+import DigitalDownloads from "./pages/DigitalDownloads";
+import Delivery from "./pages/Delivery";
 import { useAuth } from "./lib/authContext";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -45,6 +47,8 @@ export default function App() {
       <Route path="/register" element={<Register />} />
       {/* Public QR menu — behind the sticker, no auth (metered server-side). */}
       <Route path="/menu/:workspaceId" element={<PublicMenu />} />
+      {/* Public digital delivery — token-gated buyer download page. */}
+      <Route path="/d/:workspaceId/:purchaseId" element={<Delivery />} />
 
       <Route
         path="/app"
@@ -65,6 +69,7 @@ export default function App() {
         <Route path="apps/appointments" element={<Appointments />} />
         <Route path="apps/cv-generator" element={<CvGenerator />} />
         <Route path="apps/pdf-tools" element={<PdfTools />} />
+        <Route path="apps/digital-downloads" element={<DigitalDownloads />} />
         {/* M7 — user-level referrals & commissions (no workspace context). */}
         <Route path="apps/referrals" element={<Referrals />} />
         {/* Printable document view — browser print dialog is the free PDF path. */}

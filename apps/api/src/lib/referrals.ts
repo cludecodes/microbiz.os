@@ -42,13 +42,13 @@ export async function createReferral(env: Env, referrerUserId: string): Promise<
 export async function findUnusedReferralByCode(
   env: Env,
   code: string
-): Promise<{ id: string; referrer_user_id: string; referred_user_id: string | null } | null> {
+): Promise<{ id: string; code: string; referrer_user_id: string; referred_user_id: string | null } | null> {
   return env.DB.prepare(
-    `SELECT id, referrer_user_id, referred_user_id
+    `SELECT id, code, referrer_user_id, referred_user_id
      FROM referrals
      WHERE code = ? AND referred_user_id IS NULL
      LIMIT 1`
   )
     .bind(code)
-    .first<{ id: string; referrer_user_id: string; referred_user_id: string | null }>();
+    .first<{ id: string; code: string; referrer_user_id: string; referred_user_id: string | null }>();
 }

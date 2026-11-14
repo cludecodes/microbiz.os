@@ -20,6 +20,7 @@ import NotFound from "./pages/NotFound";
 import Appointments from "./pages/Appointments";
 import CvGenerator from "./pages/CvGenerator";
 import PdfTools from "./pages/PdfTools";
+import Referrals from "./pages/Referrals";
 import { useAuth } from "./lib/authContext";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -64,6 +65,8 @@ export default function App() {
         <Route path="apps/appointments" element={<Appointments />} />
         <Route path="apps/cv-generator" element={<CvGenerator />} />
         <Route path="apps/pdf-tools" element={<PdfTools />} />
+        {/* M7 — user-level referrals & commissions (no workspace context). */}
+        <Route path="apps/referrals" element={<Referrals />} />
         {/* Printable document view — browser print dialog is the free PDF path. */}
         <Route path="invoices/:documentId/print" element={<InvoicePrint />} />
         <Route path="apps/:appId" element={<AppModule />} />

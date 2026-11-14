@@ -21,7 +21,7 @@ Conventions:
 | Method | Path                 | Description                                       |
 | ------ | -------------------- | ------------------------------------------------- |
 | GET    | `/api/auth/csrf`     | Issue CSRF cookie + token `{token}`               |
-| POST   | `/api/auth/register` | `{email,password(≥10),name,locale=en|ur}` → 201 + session; auto-creates first Free workspace |
+| POST   | `/api/auth/register` | `{email,password(≥10),name,locale=en|ur,referral_code?}` → 201 + session; auto-creates first Free workspace. `referral_code` (M7) is optional and best-effort: unknown/used codes never block registration |
 | POST   | `/api/auth/login`    | `{email,password}` → session cookie               |
 | POST   | `/api/auth/logout`   | Revokes current session                           |
 | GET    | `/api/auth/me`       | `{user, workspaces[]}` with per-workspace role/plan |
@@ -118,6 +118,7 @@ exports are audit-logged and sanitized against spreadsheet formula injection.
 
 Important notes:
 
+- The referral & commissions surface is mounted under `/api/referrals` and `/api/commissions` (migration `0006_m7_referrals.sql` enables the `referrals` app and adds the `referrals.general` unlimited feature key to every plan).  
 - All commission amounts are integer minor units (paisa/cents).  
 - Commissions are fully audited via the `audit_logs` table; every status change writes an entry with actor, workspace, action, and detail.  
 - Referral codes follow the format `MBC-XXXXXX` (uppercase, 3‑32 characters, `A‑Z` and `0‑9` and hyphen).  

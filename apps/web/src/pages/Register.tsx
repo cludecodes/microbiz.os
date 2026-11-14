@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type UserMe } from "../lib/apiClient";
 import { Button, ErrorText, Input, Logo, Select } from "../components/ui";
 import { useAuth } from "../lib/authContext";
@@ -14,6 +14,10 @@ export default function Register() {
   const { refresh } = useAuth();
   const navigate = useNavigate();
   const busyRef = useRef(false);
+  const [searchParams] = useSearchParams();
+  const [referralCode, setReferralCode] = useState(
+    (searchParams.get("ref") ?? "").toUpperCase()
+  );
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -26,6 +30,7 @@ export default function Register() {
       email,
       password,
       locale,
+      ...(referralCode.trim() ? { referral_code: referralCode.trim().toUpperCase() } : {}),
     });
     if (!res.ok) {
       setError(res.detail ?? res.error ?? "Registration failed");
@@ -72,6 +77,15 @@ export default function Register() {
               <option value="en">English</option>
               <option value="ur">اُردو (Urdu)</option>
             </Select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Referral code (optional)</span>
+            <Input
+              value={referralCode}
+              onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+              placeholder="MBC-XXXXXX"
+            />
+            <span className="mt-1 block text-xs text-slate-400">Have a friend's code? Enter it to credit their referral.</span>
           </label>
           <ErrorText>{error}</ErrorText>
           <Button type="submit" disabled={busy} className="w-full">

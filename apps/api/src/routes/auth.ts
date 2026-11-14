@@ -6,6 +6,7 @@ import { createSession, getSessionUser, revokeSession, issueCsrfCookie } from ".
 import { jsonError, zodMessage, nowIso, uuid } from "../lib/http";
 import { audit, rateLimit } from "../lib/ops";
 import { slugify } from "@microbiz/shared";
+import { findUnusedReferralByCode } from "../lib/referrals";
 
 export const authRoutes = new Hono<{ Bindings: Env }>();
 
@@ -31,7 +32,7 @@ authRoutes.post("/register", async (c) => {
   }
   const parsed = registerSchema.safeParse(body);
   if (!parsed.success) return jsonError(c, 422, zodMessage(parsed.error));
-  const { email, password, name, locale } = parsed.data;
+  const { email, password, name, locale, referral_code: referralCode } = parsed.data;
 
   const existing = await c.env.DB.prepare(`SELECT id FROM users WHERE email = ?`).bind(email).first();
   if (existing) {
@@ -78,6 +79,35 @@ authRoutes.post("/register", async (c) => {
     target_id: userId,
     detail: { locale },
   });
+
+  // M7: convert a referral code if one was supplied at registration.
+  // Best-effort — an invalid or already-used code NEVER blocks registration.
+  if (referralCode) {
+    try {
+      const referral = await findUnusedReferralByCode(c.env, referralCode.trim().toUpperCase());
+      if (referral) {
+        const convertedAt = nowIso();
+        const converted = await c.env.DB.prepare(
+          `UPDATE referrals
+              SET referred_user_id = ?, converted_at = ?
+            WHERE id = ? AND referred_user_id IS NULL AND converted_at IS NULL`
+        )
+          .bind(userId, convertedAt, referral.id)
+          .run();
+        if (converted.meta.changes > 0) {
+          await audit(c, {
+            actor_user_id: userId,
+            action: "referral.converted",
+            target_type: "referral",
+            target_id: referral.id,
+            detail: { referrer_user_id: referral.referrer_user_id, code: referral.code },
+          });
+        }
+      }
+    } catch (err) {
+      console.error("referral conversion failed (non-fatal)", err);
+    }
+  }
 
   const user = await c.env.DB.prepare(
     `SELECT id, email, name, locale, is_super_admin, created_at FROM users WHERE id = ?`

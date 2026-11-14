@@ -14,7 +14,7 @@
 | M5a       | Billing core: plans, checkout intents, webhook verification, plan activation, double-entry ledger, manual reconciliation | ✅ |
 | M5b       | Settlement marking, refunds, payout profiles, invoice payment links | ✅ |
 | M6        | Super-admin analytics                      | ✅ |
-| M7        | Marketing, referrals, affiliate commissions| ⏳ next |
+| M7        | Marketing, referrals, affiliate commissions| ✅ |
 | M8        | Security audit, coverage, production prep  | ⏳ |
 
 Note: the M4a CRM module UI is English-first; its Urdu strings are batched
